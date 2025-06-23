@@ -14,8 +14,8 @@
 #     or moving the focus.
 #
 
-using module "$PSScriptRoot/logger.psm1"
-using module "$PSScriptRoot/exceptions.psm1"
+using module './logger.psm1'
+using module './exceptions.psm1'
 
 #region Private State
 # ------------------------------------------------------------------------------

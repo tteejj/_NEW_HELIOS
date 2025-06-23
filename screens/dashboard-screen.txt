@@ -1,4 +1,3 @@
-####\screens\dashboard-screen.psm1
 # FILE: screens/dashboard-screen.psm1
 # PURPOSE: Provides the main dashboard screen for PMC Terminal v5.
 #          This screen offers navigation to other parts of the application
@@ -6,10 +5,10 @@
 #          architectural principles, using PSCustomObject for the screen and
 #          direct service method calls for interactions.
 
-using module "$PSScriptRoot/../modules/logger.psm1"
-using module "$PSScriptRoot/../modules/exceptions.psm1"
-using module "$PSScriptRoot/../ui/helios-components.psm1"
-using module "$PSScriptRoot/../ui/helios-panels.psm1"
+using module '../modules/logger.psm1'
+using module '../modules/exceptions.psm1'
+using module '../ui/helios-components.psm1'
+using module '../ui/helios-panels.psm1'
 # Assuming tui-engine provides Get-ThemeColor, Request-TuiRefresh, Request-Focus
 # and other core TUI functions.
 

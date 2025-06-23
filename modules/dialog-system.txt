@@ -19,11 +19,11 @@
 #     - `Handle-DialogInput()`: To pass keyboard input for processing.
 #
 
-using module "$PSScriptRoot/logger.psm1"
-using module "$PSScriptRoot/exceptions.psm1"
-using module "$PSScriptRoot/../ui/helios-components.psm1"
-using module "$PSScriptRoot/../ui/helios-panels.psm1"
-using module "$PSScriptRoot/focus-manager.psm1" # For Get-FocusedComponent, Request-Focus
+using module './logger.psm1'
+using module './exceptions.psm1'
+using module '../ui/helios-components.psm1'
+using module '../ui/helios-panels.psm1'
+using module './focus-manager.psm1' # For Get-FocusedComponent, Request-Focus
 
 #region Private State
 # ------------------------------------------------------------------------------

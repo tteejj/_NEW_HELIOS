@@ -1,4 +1,3 @@
-####\modules\exceptions.psm1
 # modules\exceptions.psm1
 # PURPOSE: Provides custom exception types and a centralized error handling wrapper
 # for the PMC Terminal application. This ensures all errors are consistently logged
@@ -123,7 +122,8 @@ function _Get-DetailedError {
         [hashtable]$AdditionalContext = @{}
     )
     try {
-        $errorInfo = [PSCustomObject]@{
+        # FIX: Changed from [PSCustomObject] to [hashtable] to match the C# constructor type.
+        $errorInfo = [hashtable]@{
             Timestamp         = Get-Date -Format "o"
             Summary           = $ErrorRecord.Exception.Message
             Type              = $ErrorRecord.Exception.GetType().FullName
@@ -158,7 +158,7 @@ function _Get-DetailedError {
 
     } catch {
         # Fallback if the error analysis itself fails.
-        return [PSCustomObject]@{
+        return [hashtable]@{
             Timestamp     = Get-Date -Format "o"
             Summary       = "CRITICAL: Error analysis failed."
             OriginalError = $ErrorRecord.Exception.Message
@@ -256,4 +256,4 @@ function Get-ErrorHistory {
 Export-ModuleMember -Function @(
     'Invoke-WithErrorHandling',
     'Get-ErrorHistory'
-) # <--- Added the missing closing parenthesis here.
+)

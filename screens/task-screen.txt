@@ -9,10 +9,10 @@
 #   service events to automatically refresh its display.
 #
 
-using module "$PSScriptRoot/../modules/logger.psm1"
-using module "$PSScriptRoot/../modules/exceptions.psm1"
-using module "$PSScriptRoot/../ui/helios-components.psm1"
-using module "$PSScriptRoot/../ui/helios-panels.psm1"
+using module '../modules/logger.psm1'
+using module '../modules/exceptions.psm1'
+using module '../ui/helios-components.psm1'
+using module '../ui/helios-panels.psm1'
 # NOTE: The 'New-HeliosDataTable' component is assumed to exist in the component library
 # with the following API:
 # - Props: Columns (array), Data (array), OnAction (scriptblock)
