@@ -1,3 +1,4 @@
+####\modules\exceptions.psm1
 # modules\exceptions.psm1
 # PURPOSE: Provides custom exception types and a centralized error handling wrapper
 # for the PMC Terminal application. This ensures all errors are consistently logged

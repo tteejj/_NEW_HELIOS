@@ -5,13 +5,6 @@
 #          architectural principles, using PSCustomObject for the screen and
 #          direct service method calls for interactions.
 
-using module '../modules/logger.psm1'
-using module '../modules/exceptions.psm1'
-using module '../ui/helios-components.psm1'
-using module '../ui/helios-panels.psm1'
-# Assuming tui-engine provides Get-ThemeColor, Request-TuiRefresh, Request-Focus
-# and other core TUI functions.
-
 function Get-HeliosDashboardScreen {
     <#
     .SYNOPSIS
@@ -335,10 +328,6 @@ function Get-HeliosDashboardScreen {
                 # If it were a sub-screen, it would use $this._services.Navigation.Back() here.
 
                 return $handled
-            } -ErrorHandler {
-                param($Exception)
-                Write-Log -Level Error -Message "Dashboard HandleInput error: $($Exception.Message)" -Data $Exception.Context
-                return $false
             }
         }
         $screen | Add-Member -MemberType ScriptMethod -Name HandleInput -Value $handleInputScript
@@ -350,9 +339,6 @@ function Get-HeliosDashboardScreen {
                 } else {
                     Write-Log -Level Warn -Message "Dashboard Render: Root panel not found or missing Render method."
                 }
-            } -ErrorHandler {
-                param($Exception)
-                Write-Log -Level Error -Message "Dashboard Render error: $($Exception.Message)" -Data $Exception.Context
             }
         }
         $screen | Add-Member -MemberType ScriptMethod -Name Render -Value $renderScript
@@ -369,10 +355,6 @@ function Get-HeliosDashboardScreen {
         $screen.PSObject.Properties.Add([psnoteproperty]::new('RootPanel', $screen._rootPanel))
 
         return $screen
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Fatal -Message "Failed to create Helios Dashboard Screen: $($Exception.Message)" -Data $Exception.Context
-        throw # Re-throw to main application error handler
     }
 }
 

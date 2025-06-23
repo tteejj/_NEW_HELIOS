@@ -4,11 +4,11 @@
 #          using a simple menu of Helios buttons. It adheres to the PowerShell-First
 #          architectural principles, using PSCustomObject for the screen and
 #          direct service method calls for interactions.
-
-using module '../modules/logger.psm1'
-using module '../modules/exceptions.psm1'
-using module '../ui/helios-components.psm1'
-using module '../ui/helios-panels.psm1'
+#DONT USE.->MAIN
+#using module '../modules/logger.psm1'
+#using module '../modules/exceptions.psm1'
+#using module '../ui/helios-components.psm1'
+#using module '../ui/helios-panels.psm1'
 # Assuming tui-engine provides Get-ThemeColor, Request-TuiRefresh, Request-Focus
 # and other core TUI functions.
 

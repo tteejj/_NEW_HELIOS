@@ -19,13 +19,21 @@ function Load-PMCTerminalModules {
         if (-not $Silent) { Write-Host "Initializing PMC Terminal v5..." -ForegroundColor Cyan }
         $loadedModules = @()
         
+        # Corrected module loading order to respect dependencies.
+        # UI primitives are loaded before systems that use them.
         $script:ModulesToLoad = @(
+            # Core utilities first
             @{ Name = "theme-support"; Path = "modules\theme-support.psm1"; Required = $true },
             @{ Name = "focus-manager"; Path = "modules\focus-manager.psm1"; Required = $true },
+            @{ Name = "event-system"; Path = "modules\event-system.psm1"; Required = $true },
+            # Core engine next, it provides primitives for components
             @{ Name = "tui-engine"; Path = "modules\tui-engine.psm1"; Required = $true },
-            @{ Name = "dialog-system"; Path = "modules\dialog-system.psm1"; Required = $true },
+            # UI library that depends on the engine and theme
             @{ Name = "helios-panels"; Path = "ui\helios-panels.psm1"; Required = $true },
             @{ Name = "helios-components"; Path = "ui\helios-components.psm1"; Required = $true },
+            # High-level systems that use the UI library
+            @{ Name = "dialog-system"; Path = "modules\dialog-system.psm1"; Required = $true },
+            # Application services last
             @{ Name = "task-service"; Path = "services\task-service.psm1"; Required = $true },
             @{ Name = "keybindings"; Path = "services\keybindings.psm1"; Required = $true },
             @{ Name = "navigation"; Path = "services\navigation.psm1"; Required = $true }
@@ -93,17 +101,31 @@ function Register-PMCTerminalScreens {
                 if (-not $Silent) { Write-Host "  Loading $($screenName)..." -ForegroundColor Gray }
                 Import-Module $screenPath -Force -Global
                 
-                $factoryFunctionName = "Get-Helios" + ((($screenName -split "-") | ForEach-Object { $_.Substring(0,1).ToUpper() + $_.Substring(1) }) -join "") + "Screen"
+                # Fix: Strip '-screen' suffix before processing to avoid double 'Screen' in function name
+                $baseScreenName = $screenName -replace '-screen$', ''
+                $factoryFunctionName = "Get-Helios" + (($baseScreenName.Substring(0,1).ToUpper() + $baseScreenName.Substring(1)) + "Screen")
                 
                 if (Get-Command -Name $factoryFunctionName -ErrorAction SilentlyContinue) {
                     $path = "/$($screenName.Replace('-screen',''))"
-                    $Services.Navigation.RegisterRoute($path, { param($svc) & $factoryFunctionName -Services $svc })
+                    
+                    # FIXED: Create a proper factory scriptblock that isolates parameter passing
+                    # Use a closure that captures the function name and calls it with only the Services parameter
+                    $capturedFunctionName = $factoryFunctionName
+                    $factoryScript = {
+                        param([PSCustomObject]$Services)
+                        Invoke-WithErrorHandling -Component "ScreenFactory" -Context @{ Function = $using:capturedFunctionName } -ScriptBlock {
+                            # Call the screen factory function with only the Services parameter
+                            return & $using:capturedFunctionName -Services $Services
+                        }
+                    }.GetNewClosure()
+                    
+                    $Services.Navigation.RegisterRoute($path, $factoryScript)
                     $registeredScreens += $screenName
                 } else {
-                    Write-Log -Level Warn -Message "Expected screen factory '$factoryFunctionName' not found for module '$screenName'."
+                    Write-Log -Level Warning -Message "Expected screen factory '$factoryFunctionName' not found for module '$screenName'."
                 }
             } else { 
-                Write-Log -Level Warn -Message "Screen module not found: $screenName at $screenPath."
+                Write-Log -Level Warning -Message "Screen module not found: $screenName at $screenPath."
             }
         }
         

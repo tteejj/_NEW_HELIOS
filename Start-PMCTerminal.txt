@@ -10,33 +10,6 @@ $ErrorActionPreference = "Stop"
 # Get the directory where this script is located
 $script:BasePath = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-#region --- Module Definitions ---
-# Module loading order is critical - dependencies must load first.
-# This list defines the modules to be loaded and their relative paths.
-$script:ModulesToLoad = @(
-    # Core Application Modules (ordered by dependency)
-    @{ Name = "theme-support"; Path = "modules\theme-support.psm1"; Required = $true },
-    @{ Name = "focus-manager"; Path = "modules\focus-manager.psm1"; Required = $true },
-    @{ Name = "tui-engine"; Path = "modules\tui-engine.psm1"; Required = $true },
-    @{ Name = "dialog-system"; Path = "modules\dialog-system.psm1"; Required = $true },
-
-    # UI Modules (depend on tui-engine, theme-manager, focus-manager)
-    @{ Name = "helios-panels"; Path = "ui\helios-panels.psm1"; Required = $true },
-    @{ Name = "helios-components"; Path = "ui\helios-components.psm1"; Required = $true },
-
-    # Service Modules (depend on others)
-    @{ Name = "task-service"; Path = "services\task-service.psm1"; Required = $true },
-    @{ Name = "keybindings"; Path = "services\keybindings.psm1"; Required = $true },
-    @{ Name = "navigation"; Path = "services\navigation.psm1"; Required = $true }
-)
-
-# Screen Modules (loaded after all core modules and services, as they depend on them)
-$script:ScreenModules = @(
-    "dashboard-screen",
-    "task-screen"
-)
-#endregion
-
 #region --- Helper Functions ---
 
 function Load-PMCTerminalModules {
@@ -45,8 +18,29 @@ function Load-PMCTerminalModules {
     Invoke-WithErrorHandling -Component "ModuleLoader" -Context @{ Operation = "Load-PMCTerminalModules" } -ScriptBlock {
         if (-not $Silent) { Write-Host "Initializing PMC Terminal v5..." -ForegroundColor Cyan }
         $loadedModules = @()
+        
+        # Corrected module loading order to respect dependencies.
+        # UI primitives are loaded before systems that use them.
+        $script:ModulesToLoad = @(
+            # Core utilities first
+            @{ Name = "theme-support"; Path = "modules\theme-support.psm1"; Required = $true },
+            @{ Name = "focus-manager"; Path = "modules\focus-manager.psm1"; Required = $true },
+            # Core engine next, it provides primitives for components
+            @{ Name = "tui-engine"; Path = "modules\tui-engine.psm1"; Required = $true },
+            # UI library that depends on the engine and theme
+            @{ Name = "helios-panels"; Path = "ui\helios-panels.psm1"; Required = $true },
+            @{ Name = "helios-components"; Path = "ui\helios-components.psm1"; Required = $true },
+            # High-level systems that use the UI library
+            @{ Name = "dialog-system"; Path = "modules\dialog-system.psm1"; Required = $true },
+            # Application services last
+            @{ Name = "task-service"; Path = "services\task-service.psm1"; Required = $true },
+            @{ Name = "keybindings"; Path = "services\keybindings.psm1"; Required = $true },
+            @{ Name = "navigation"; Path = "services\navigation.psm1"; Required = $true }
+        )
+
         foreach ($module in $script:ModulesToLoad) {
             $modulePath = Join-Path $script:BasePath $module.Path
+            
             try {
                 if (Test-Path $modulePath) {
                     if (-not $Silent) { Write-Host "  Loading $($module.Name)..." -ForegroundColor Gray }
@@ -59,6 +53,7 @@ function Load-PMCTerminalModules {
                 throw "Failed to load module $($module.Name): $($_.Exception.Message)"
             }
         }
+        
         if (-not $Silent) { Write-Host "Loaded $($loadedModules.Count) core modules successfully." -ForegroundColor Green }
         return $loadedModules
     }
@@ -69,6 +64,7 @@ function Initialize-PMCTerminalServices {
     
     Invoke-WithErrorHandling -Component "ServiceInitializer" -Context @{ Operation = "Initialize-PMCTerminalServices" } -ScriptBlock {
         if (-not $Silent) { Write-Host "Initializing services..." -ForegroundColor Cyan }
+        
         $services = [PSCustomObject]@{}
         
         $services | Add-Member -MemberType NoteProperty -Name Task -Value (Initialize-TaskService)
@@ -94,6 +90,8 @@ function Register-PMCTerminalScreens {
         if (-not $Services.Navigation) { throw "Navigation service is null, cannot register screens." }
 
         if (-not $Silent) { Write-Host "Loading screens and registering routes..." -ForegroundColor Cyan }
+        
+        $script:ScreenModules = @( "dashboard-screen", "task-screen" )
         $registeredScreens = @()
         
         foreach ($screenName in $script:ScreenModules) {
@@ -134,9 +132,10 @@ function Start-PMCTerminal {
             
             $minWidth = 80; $minHeight = 24
             if ($Host.UI.RawUI) {
-                $currentWidth = $Host.UI.RawUI.WindowSize.Width; $currentHeight = $Host.UI.RawUI.WindowSize.Height
+                $currentWidth = $Host.UI.RawUI.WindowSize.Width
+                $currentHeight = $Host.UI.RawUI.WindowSize.Height
                 if ($currentWidth -lt $minWidth -or $currentHeight -lt $minHeight) {
-                    Write-Host "Console window too small! Minimum: ${minWidth}x${minHeight}. Please resize and restart." -ForegroundColor Red
+                    Write-Host "Console window too small! Minimum required: ${minWidth}x${minHeight}. Please resize and restart." -ForegroundColor Red
                     exit 1
                 }
             }
@@ -166,7 +165,7 @@ function Start-PMCTerminal {
         $DetailedError = if ($Exception -is [Helios.HeliosException]) { $Exception.DetailedContext } else { $null }
 
         Write-Host "`n=== CRITICAL FAILURE ===" -ForegroundColor Red
-        Write-Host "Fatal error during PMC Terminal startup." -ForegroundColor Red
+        Write-Host "Fatal error occurred during PMC Terminal startup." -ForegroundColor Red
         Write-Host "Error: $($Exception.Message)" -ForegroundColor Red
         
         if ($DetailedError) {
@@ -189,40 +188,47 @@ function Start-PMCTerminal {
 $script:Silent = $args -contains "-silent" -or $args -contains "-s"
 
 try {
+    # CRITICAL: Pre-load essential modules (exceptions, logger) BEFORE anything else.
+    # This ensures Invoke-WithErrorHandling and Write-Log are available immediately.
     $exceptionsModulePath = Join-Path $script:BasePath "modules\exceptions.psm1"
     $loggerModulePath = Join-Path $script:BasePath "modules\logger.psm1"
     
-    if (-not (Test-Path $exceptionsModulePath) -or -not (Test-Path $loggerModulePath)) { 
-        throw "Core logger or exceptions module is missing. Cannot continue."
-    }
+    if (-not (Test-Path $exceptionsModulePath)) { throw "CRITICAL FAILURE: The core exception handling module is missing at '$exceptionsModulePath'. Cannot continue." }
+    if (-not (Test-Path $loggerModulePath)) { throw "CRITICAL FAILURE: The core logger module is missing at '$loggerModulePath'. Cannot continue." }
     
     Import-Module $exceptionsModulePath -Force -Global
     Import-Module $loggerModulePath -Force -Global
 
+    # Initialize logger as early as possible
     Initialize-Logger
     
+    # Provide immediate feedback to the user
     if (-not $script:Silent) {
         Write-Host "PMC Terminal v5 - Initializing..." -ForegroundColor Cyan
         Write-Host "Log files written to: $(Get-LogPath)" -ForegroundColor Green
         Write-Host ""
     }
     
+    # Start the terminal application
     $appSuccess = Start-PMCTerminal -Silent:$script:Silent
     
     if (-not $appSuccess) {
+        # If Start-PMCTerminal returned $false due to a handled error, exit with a non-zero code.
         exit 1
     }
 
 } catch {
-    # Ultimate fallback for pre-loading failures.
+    # This is the ultimate fallback error handler if Invoke-WithErrorHandling or pre-loading itself fails.
     Write-Host "`n!!! ULTIMATE FALLBACK ERROR HANDLER !!!" -ForegroundColor Red
-    Write-Host "An unhandled critical error occurred: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "An unhandled critical error occurred during PMC Terminal startup." -ForegroundColor Red
+    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host "Script stack trace:" -ForegroundColor Yellow
     Write-Host $_.ScriptStackTrace -ForegroundColor Gray
-    exit 1
+    exit 1 # Exit with error code
     
 } finally {
-    # This block always runs. Only perform cleanup that is safe even after a crash.
+    # Final cleanup before exiting. This block always runs.
+    # Only perform cleanup that is safe even after a crash.
     if (Get-Command -Name "Cleanup-TuiEngine" -ErrorAction SilentlyContinue) { 
         if (-not $script:Silent) { Write-Host "`nShutting down TUI Engine..." -ForegroundColor Gray }
         Cleanup-TuiEngine
@@ -235,3 +241,5 @@ try {
     
     # Let the exit code from the try/catch blocks control the process.
 }
+
+#endregion

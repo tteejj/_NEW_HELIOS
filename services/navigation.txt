@@ -1,3 +1,4 @@
+####\services\navigation.psm1
 # FILE: services/navigation.psm1
 # PURPOSE: Provides a centralized service for managing screen navigation and routing.
 # This service encapsulates all logic related to moving between different views in the application.
@@ -59,7 +60,7 @@ function Initialize-NavigationService {
                 throw "The screen factory for path '$Path' did not return a valid screen object."
             }
 
-            Push-Screen -Screen $screen
+            Push-Screen -Screen $screen -Services $Services
             $this._history.Push($Path)
         }
     }

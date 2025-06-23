@@ -1,3 +1,4 @@
+####\modules\dialog-system.psm1
 #
 # MODULE: modules/dialog-system.psm1
 #
@@ -19,11 +20,11 @@
 #     - `Handle-DialogInput()`: To pass keyboard input for processing.
 #
 
-using module './logger.psm1'
-using module './exceptions.psm1'
-using module '../ui/helios-components.psm1'
-using module '../ui/helios-panels.psm1'
-using module './focus-manager.psm1' # For Get-FocusedComponent, Request-Focus
+#DONT USE -> MAIN DOES IT
+#using module './exceptions.psm1'
+#using module '../ui/helios-components.psm1'
+#using module '../ui/helios-panels.psm1'
+#using module './focus-manager.psm1' # For Get-FocusedComponent, Request-Focus
 
 #region Private State
 # ------------------------------------------------------------------------------

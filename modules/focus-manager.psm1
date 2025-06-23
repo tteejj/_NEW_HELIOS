@@ -1,3 +1,4 @@
+####\modules\focus-manager.psm1
 #
 # MODULE: modules/focus-manager.psm1
 #
@@ -14,8 +15,9 @@
 #     or moving the focus.
 #
 
-using module './logger.psm1'
-using module './exceptions.psm1'
+#DONT USE.->MAIN
+#using module './logger.psm1'
+#using module './exceptions.psm1'
 
 #region Private State
 # ------------------------------------------------------------------------------

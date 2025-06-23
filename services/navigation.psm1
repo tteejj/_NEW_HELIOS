@@ -37,7 +37,7 @@ function Initialize-NavigationService {
             [Parameter(Mandatory)]
             [string]$Path,
             [Parameter(Mandatory)]
-            [hashtable]$Services
+            [PSCustomObject]$Services
         )
 
         Invoke-WithErrorHandling -Component "$($this.Name).GoTo" -Context @{ Path = $Path } -ScriptBlock {
@@ -54,12 +54,16 @@ function Initialize-NavigationService {
 
             Write-Log -Level Info -Message "Navigating to path: $Path"
             $factory = $this._routes[$lookupPath]
-            $screen = & $factory $Services
+            
+            # FIXED: Call the factory scriptblock with proper parameter isolation
+            # Use Invoke-Command to ensure only the Services parameter is passed
+            $screen = Invoke-Command -ScriptBlock $factory -ArgumentList $Services
+            
             if ($null -eq $screen) {
                 throw "The screen factory for path '$Path' did not return a valid screen object."
             }
 
-            Push-Screen -Screen $screen
+            Push-Screen -Screen $screen -Services $Services
             $this._history.Push($Path)
         }
     }

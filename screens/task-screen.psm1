@@ -8,11 +8,11 @@
 #   It interacts directly with the TaskService to manage state and subscribes to
 #   service events to automatically refresh its display.
 #
-
-using module '../modules/logger.psm1'
-using module '../modules/exceptions.psm1'
-using module '../ui/helios-components.psm1'
-using module '../ui/helios-panels.psm1'
+#DONT USE.->MAIN
+#using module '../modules/logger.psm1'
+#using module '../modules/exceptions.psm1'
+#using module '../ui/helios-components.psm1'
+#using module '../ui/helios-panels.psm1'
 # NOTE: The 'New-HeliosDataTable' component is assumed to exist in the component library
 # with the following API:
 # - Props: Columns (array), Data (array), OnAction (scriptblock)
@@ -278,14 +278,14 @@ function Get-HeliosTaskScreen {
     $initScript = {
         param(
             [Parameter(Mandatory = $true)]
-            [hashtable]$services
+            [PSCustomObject]$services
         )
         Invoke-WithErrorHandling -Component "$($this.Name).Init" -Context @{} -ScriptBlock {
             Write-Log -Level Info -Message "Initializing Task Screen."
             # Defensive programming: ensure required services are provided
             if (-not $services) { throw "Services hashtable cannot be null." }
             if (-not $services.Task) { throw "TaskService is missing from services." }
-            if (-not $services.Keybinding) { throw "KeybindingService is missing from services." }
+            if (-not $services.Keybindings) { throw "KeybindingService is missing from services." }
 
             $this._services = $services
 
@@ -338,7 +338,7 @@ function Get-HeliosTaskScreen {
         }
 
         Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -Context @{ Key = $Key.Key } -ScriptBlock {
-            $keybindingSvc = $this._services.Keybinding
+            $keybindingSvc = $this._services.Keybindings
             if ($keybindingSvc.IsAction('list.new', $Key))    { $this._NewTask(); return $true }
             if ($keybindingSvc.IsAction('list.edit', $Key))   { $this._EditTask($null); return $true }
             if ($keybindingSvc.IsAction('list.delete', $Key)) { $this._DeleteTask($null); return $true }

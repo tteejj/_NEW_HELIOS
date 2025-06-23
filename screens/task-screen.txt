@@ -8,11 +8,11 @@
 #   It interacts directly with the TaskService to manage state and subscribes to
 #   service events to automatically refresh its display.
 #
-
-using module '../modules/logger.psm1'
-using module '../modules/exceptions.psm1'
-using module '../ui/helios-components.psm1'
-using module '../ui/helios-panels.psm1'
+#DONT USE.->MAIN
+#using module '../modules/logger.psm1'
+#using module '../modules/exceptions.psm1'
+#using module '../ui/helios-components.psm1'
+#using module '../ui/helios-panels.psm1'
 # NOTE: The 'New-HeliosDataTable' component is assumed to exist in the component library
 # with the following API:
 # - Props: Columns (array), Data (array), OnAction (scriptblock)

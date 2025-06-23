@@ -1,4 +1,3 @@
-####\ui\helios-panels.psm1
 # FILE: ui/helios-panels.psm1
 # PURPOSE: Provides a suite of declarative layout panels for UI construction,
 # refactored to use a PowerShell-idiomatic PSCustomObject model.

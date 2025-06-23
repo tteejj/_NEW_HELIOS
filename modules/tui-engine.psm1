@@ -1,10 +1,11 @@
+####\modules\tui-engine.psm1
 # modules/tui-engine.psm1
 # PURPOSE: Core TUI rendering engine implementing the PowerShell-first architecture
 # Provides screen management, input processing, and frame rendering with recursive component tree traversal
 
 #region Module Dependencies
-Import-Module "$PSScriptRoot\logger.psm1" -Force
-Import-Module "$PSScriptRoot\exceptions.psm1" -Force
+#Import-Module "$PSScriptRoot\logger.psm1" -Force
+#Import-Module "$PSScriptRoot\exceptions.psm1" -Force
 # NOTE: event-system removed - using PowerShell native eventing
 
 #endregion
@@ -89,7 +90,7 @@ function Initialize-TuiEngine {
         $ErrorActionPreference = 'SilentlyContinue'
         Unregister-Event -SourceIdentifier 'TuiEngine.System' -ErrorAction SilentlyContinue
         $ErrorActionPreference = 'Stop'
-        Register-EngineEvent -SourceIdentifier 'TuiEngine.System' -SupportEvent
+        # Note: We don't need Register-EngineEvent here since New-Event will create the source automatically
         
         # Announce initialization
         New-Event -SourceIdentifier 'TuiEngine.System' -EventArguments @{ 
@@ -170,22 +171,18 @@ function Initialize-InputThread {
 #region Main Loop
 
 function Start-TuiLoop {
-    param([PSCustomObject]$InitialScreen = $null)
+    param()
 
     try {
-        Invoke-WithErrorHandling -Component "TuiEngine.MainLoop" -Context @{ InitialScreen = $InitialScreen?.Name } -ScriptBlock {
+        Invoke-WithErrorHandling -Component "TuiEngine.MainLoop" -Context @{} -ScriptBlock {
             # Initialize if not already done
             if (-not $global:TuiState.BufferWidth -or $global:TuiState.BufferWidth -eq 0) {
                 Initialize-TuiEngine
             }
 
-            if ($InitialScreen) {
-                Push-Screen -Screen $InitialScreen
-            }
-
             # Validate we have a screen to display
             if (-not $global:TuiState.CurrentScreen -and $global:TuiState.ScreenStack.Count -eq 0) {
-                throw "No screen available to display"
+                throw "No screen available to display. Use Navigation.GoTo() before starting the loop."
             }
 
             $global:TuiState.Running = $true
@@ -466,7 +463,10 @@ function Render-BufferOptimized {
 #region Screen Management
 
 function Push-Screen {
-    param([PSCustomObject]$Screen)
+    param(
+        [PSCustomObject]$Screen,
+        [PSCustomObject]$Services
+    )
     
     if (-not $Screen) { return }
     
@@ -488,7 +488,8 @@ function Push-Screen {
         $global:TuiState.CurrentScreen = $Screen
         
         if ($Screen.PSObject.ScriptMethods['Init'] -and -not $Screen._isInitialized) {
-            $Screen.Init($global:Services)
+            if (-not $Services) { throw "Services object must be provided to initialize a screen."}
+            $Screen.Init($Services)
             $Screen._isInitialized = $true
         }
         
