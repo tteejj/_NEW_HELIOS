@@ -108,16 +108,16 @@ function Register-PMCTerminalScreens {
                 if (Get-Command -Name $factoryFunctionName -ErrorAction SilentlyContinue) {
                     $path = "/$($screenName.Replace('-screen',''))"
                     
-                    # FIXED: Create a proper factory scriptblock that isolates parameter passing
-                    # Use a closure that captures the function name and calls it with only the Services parameter
-                    $capturedFunctionName = $factoryFunctionName
-                    $factoryScript = {
-                        param([PSCustomObject]$Services)
-                        Invoke-WithErrorHandling -Component "ScreenFactory" -Context @{ Function = $using:capturedFunctionName } -ScriptBlock {
-                            # Call the screen factory function with only the Services parameter
-                            return & $using:capturedFunctionName -Services $Services
+                    # FIXED: Create a factory scriptblock that embeds the function name directly
+                    # This avoids closure issues entirely by using string substitution
+                    $factoryScriptText = @"
+                        param([PSCustomObject]`$Services)
+                        Invoke-WithErrorHandling -Component "ScreenFactory" -Context @{ Function = "$factoryFunctionName" } -ScriptBlock {
+                            # Call the screen factory function directly by name
+                            return $factoryFunctionName -Services `$Services
                         }
-                    }.GetNewClosure()
+"@
+                    $factoryScript = [ScriptBlock]::Create($factoryScriptText)
                     
                     $Services.Navigation.RegisterRoute($path, $factoryScript)
                     $registeredScreens += $screenName

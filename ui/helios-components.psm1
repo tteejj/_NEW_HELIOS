@@ -31,10 +31,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         
         $fg = if ($this.ForegroundColor) { $this.ForegroundColor } else { Get-ThemeColor "Primary" -Default ([ConsoleColor]::White) }
         Write-BufferString -X $this.X -Y $this.Y -Text $this.Text -ForegroundColor $fg
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Label Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -99,10 +96,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         $textX = $this.X + [Math]::Floor(($this.Width - $this.Text.Length) / 2)
         Write-BufferString -X $textX -Y ($this.Y + 1) -Text $this.Text `
             -ForegroundColor $fgColor -BackgroundColor $bgColor
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Button Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -113,20 +107,13 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             if ($this.OnClick) {
                 Invoke-WithErrorHandling -Component "$($this.Name).OnClick" -ScriptBlock {
                     & $this.OnClick
-                } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "Button OnClick error: $($Exception.Message)" -Data $Exception.Context
-                }
+                } -Context @{ Component = $this.Name; Key = $Key }
             }
             Request-TuiRefresh
             return $true
         }
         return $false
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Button HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
@@ -189,10 +176,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
             Write-BufferString -X $cursorX -Y ($this.Y + 1) -Text "_" `
                 -BackgroundColor (Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan))
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TextBox Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -282,19 +266,12 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             if ($this.OnChange) { 
                 Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
                     & $this.OnChange -NewValue $text
-                } -Context @{ Component = $this.Name; NewValue = $text } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "TextBox OnChange error: $($Exception.Message)" -Data $Exception.Context
-                }
+                } -Context @{ Component = $this.Name; NewValue = $text }
             }
             Request-TuiRefresh
         }
         return $true
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TextBox HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
@@ -338,10 +315,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         }
         $checkbox = if ($this.Checked) { "[X]" } else { "[ ]" }
         Write-BufferString -X $this.X -Y $this.Y -Text "$checkbox $($this.Text)" -ForegroundColor $fg
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "CheckBox Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -354,20 +328,13 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             if ($this.OnChange) { 
                 Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
                     & $this.OnChange -NewValue $this.Checked 
-                } -Context @{ Component = $this.Name; NewValue = $this.Checked } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "CheckBox OnChange error: $($Exception.Message)" -Data $Exception.Context
-                }
+                } -Context @{ Component = $this.Name; NewValue = $this.Checked }
             }
             Request-TuiRefresh
             return $true
         }
         return $false
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "CheckBox HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
@@ -411,10 +378,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
             $textX = $this.X + [Math]::Floor(($this.Width - $percentText.Length) / 2)
             Write-BufferString -X $textX -Y $this.Y -Text $percentText -ForegroundColor (Get-ThemeColor "Primary" -Default ([ConsoleColor]::White))
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "ProgressBar Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -518,10 +482,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
                 Write-BufferString -X ($this.X + $this.Width - 2) -Y ($this.Y + 1 + $i) -Text $char -ForegroundColor $color
             }
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TextArea Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -701,18 +662,11 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
         if ($this.OnChange) { 
             Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
                 & $this.OnChange -NewValue $this.Text 
-            } -Context @{ Component = $this.Name; NewValue = $this.Text } -ErrorHandler {
-                param($Exception)
-                Write-Log -Level Error -Message "TextArea OnChange error: $($Exception.Message)" -Data $Exception.Context
-            }
+            } -Context @{ Component = $this.Name; NewValue = $this.Text }
         }
         Request-TuiRefresh
         return $true
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TextArea HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
@@ -831,10 +785,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
             Write-BufferString -X ($this.X + 2) -Y $timeY -Text "Time: $timeStr" `
                 -ForegroundColor (Get-ThemeColor "Primary" -Default ([ConsoleColor]::White))
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "CalendarPicker Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -900,10 +851,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
                 if ($this.OnSelect) {
                     Invoke-WithErrorHandling -Component "$($this.Name).OnSelect" -ScriptBlock {
                         & $this.OnSelect -Date $date
-                    } -Context @{ Component = $this.Name; SelectedDate = $date } -ErrorHandler {
-                        param($Exception)
-                        Write-Log -Level Error -Message "CalendarPicker OnSelect error: $($Exception.Message)" -Data $Exception.Context
-                    }
+                    } -Context @{ Component = $this.Name; SelectedDate = $date }
                 }
             }
             default {
@@ -916,20 +864,13 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             if ($this.OnChange) {
                 Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
                     & $this.OnChange -NewValue $date
-                } -Context @{ Component = $this.Name; NewValue = $date } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "CalendarPicker OnChange error: $($Exception.Message)" -Data $Exception.Context
-                }
+                } -Context @{ Component = $this.Name; NewValue = $date }
             }
             Request-TuiRefresh
         }
         
         return $handled
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "CalendarPicker HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
@@ -990,10 +931,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         if ($this.IsFocused -and $this.Width -ge 6) { 
             Write-BufferString -X ($this.X + $this.Width - 4) -Y ($this.Y + 1) -Text "⏰" -ForegroundColor $borderColor 
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TimePicker Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -1025,19 +963,12 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             if ($this.OnChange) { 
                 Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
                     & $this.OnChange -NewHour $hour -NewMinute $minute 
-                } -Context @{ Component = $this.Name; NewHour = $hour; NewMinute = $minute } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "TimePicker OnChange error: $($Exception.Message)" -Data $Exception.Context
-                }
+                } -Context @{ Component = $this.Name; NewHour = $hour; NewMinute = $minute }
             }
             Request-TuiRefresh
         }
         return $handled
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TimePicker HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
@@ -1145,10 +1076,7 @@ $processDataScriptBlock = {
         if ($this.CurrentPage -ge $totalPages) {
             $this.CurrentPage = [Math]::Max(0, $totalPages - 1)
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "DataTable ProcessData error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 $component | Add-Member -MemberType ScriptMethod -Name "ProcessData" -Value $processDataScriptBlock
 
@@ -1159,10 +1087,7 @@ $updateDataScriptBlock = {
         $this.Data = @($NewData)
         $this.ProcessData()
         Request-TuiRefresh
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "DataTable UpdateData error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 $component | Add-Member -MemberType ScriptMethod -Name "UpdateData" -Value $updateDataScriptBlock
 
@@ -1364,10 +1289,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
                     -Text $pageText -ForegroundColor (Get-ThemeColor "Info" -Default ([ConsoleColor]::Cyan))
             }
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "DataTable Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -1474,10 +1396,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
                 if ($this.OnAction -and $selectedItem) {
                     Invoke-WithErrorHandling -Component "$($this.Name).OnAction" -ScriptBlock {
                         & $this.OnAction -Action 'select' -Item $selectedItem
-                    } -Context @{ Component = $this.Name; Action = 'select'; Item = $selectedItem } -ErrorHandler {
-                        param($Exception)
-                        Write-Log -Level Error -Message "DataTable OnAction error: $($Exception.Message)" -Data $Exception.Context
-                    }
+                    } -Context @{ Component = $this.Name; Action = 'select'; Item = $selectedItem }
                 }
                 return $true
             }
@@ -1485,10 +1404,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
                 if ($this.OnAction -and $selectedItem) {
                     Invoke-WithErrorHandling -Component "$($this.Name).OnAction" -ScriptBlock {
                         & $this.OnAction -Action 'select' -Item $selectedItem
-                    } -Context @{ Component = $this.Name; Action = 'select'; Item = $selectedItem } -ErrorHandler {
-                        param($Exception)
-                        Write-Log -Level Error -Message "DataTable OnAction error: $($Exception.Message)" -Data $Exception.Context
-                    }
+                    } -Context @{ Component = $this.Name; Action = 'select'; Item = $selectedItem }
                 }
                 return $true
             }
@@ -1496,10 +1412,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
                 if ($this.OnAction -and $selectedItem) {
                     Invoke-WithErrorHandling -Component "$($this.Name).OnAction" -ScriptBlock {
                         & $this.OnAction -Action 'delete' -Item $selectedItem
-                    } -Context @{ Component = $this.Name; Action = 'delete'; Item = $selectedItem } -ErrorHandler {
-                        param($Exception)
-                        Write-Log -Level Error -Message "DataTable OnAction error: $($Exception.Message)" -Data $Exception.Context
-                    }
+                    } -Context @{ Component = $this.Name; Action = 'delete'; Item = $selectedItem }
                 }
                 return $true
             }
@@ -1538,11 +1451,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             }
         }
         return $false
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "DataTable HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 $component.ProcessData()

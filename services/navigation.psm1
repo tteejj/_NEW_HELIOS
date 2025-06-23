@@ -55,9 +55,9 @@ function Initialize-NavigationService {
             Write-Log -Level Info -Message "Navigating to path: $Path"
             $factory = $this._routes[$lookupPath]
             
-            # FIXED: Call the factory scriptblock with proper parameter isolation
-            # Use Invoke-Command to ensure only the Services parameter is passed
-            $screen = Invoke-Command -ScriptBlock $factory -ArgumentList $Services
+            # FIXED: Call the factory scriptblock directly with the dot operator
+            # This preserves the closure context for $using: variables
+            $screen = & $factory $Services
             
             if ($null -eq $screen) {
                 throw "The screen factory for path '$Path' did not return a valid screen object."
