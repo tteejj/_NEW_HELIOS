@@ -45,6 +45,7 @@ function Get-HeliosDashboardScreen {
         $screen = [PSCustomObject]@{
             Name                  = "HeliosDashboardScreen"
             _services             = $Services # Store the services for later use
+            _isInitialized        = $false 
             _eventSubscriptions   = [System.Collections.ArrayList]::new() # For future event cleanup
             _rootPanel            = $null
             _menuButtons          = [System.Collections.ArrayList]::new() # To manage focus
@@ -174,7 +175,8 @@ function Get-HeliosDashboardScreen {
                 # Using Where-Object and Select-Object to ensure we work with an array of focusable buttons
                 $focusableButtons = ($this._menuButtons | Where-Object { $_.IsFocusable }).ToArray()
                 if ($focusableButtons.Count -eq 0) {
-                    Write-Log -Level Warn -Message "No focusable buttons found on dashboard."
+                    # FIX: Use 'Warning' instead of 'Warn'
+                    Write-Log -Level Warning -Message "No focusable buttons found on dashboard."
                     return
                 }
 
@@ -203,16 +205,14 @@ function Get-HeliosDashboardScreen {
                 if ($newButton -eq $currentFocusedButton) { return }
 
                 # Remove focus from old button
-                if ($currentFocusedButton -and $currentFocusedButton.PSObject.Properties.Contains('IsFocused')) {
+                if ($currentFocusedButton -and ($currentFocusedButton.PSObject.Properties.Name -contains 'IsFocused')) {
                     $currentFocusedButton.IsFocused = $false
                 }
 
                 # Set focus to new button
-                if ($newButton -and $newButton.PSObject.Properties.Contains('IsFocused')) {
+                if ($newButton -and ($newButton.PSObject.Properties.Name -contains 'IsFocused')) {
                     $newButton.IsFocused = $true
                     # Inform TUI engine about new focus via Request-Focus
-                    # Request-Focus is provided by focus-manager.psm1, imported by dialog-system.psm1 (which is imported by Start-PMCTerminal)
-                    # and also by tui-engine.psm1 directly, so it should be available.
                     Request-Focus -Component $newButton -Reason 'DashboardMenuNavigation'
                     
                     # Update _focusedButtonIndex to the index of the actual button in the _menuButtons list
@@ -268,7 +268,8 @@ function Get-HeliosDashboardScreen {
                         Unregister-Event -SubscriptionId $sub.Id
                         Write-Log -Level Debug -Message "Unregistered event subscription: $($sub.Id)"
                     } catch {
-                        Write-Log -Level Warn -Message "Failed to unregister event subscription $($sub.Id): $($_.Exception.Message)"
+                        # FIX: Use 'Warning' instead of 'Warn'
+                        Write-Log -Level Warning -Message "Failed to unregister event subscription $($sub.Id): $($_.Exception.Message)"
                     }
                 }
                 $this._eventSubscriptions.Clear()
@@ -280,7 +281,7 @@ function Get-HeliosDashboardScreen {
         $handleInputScript = {
             param(
                 [Parameter(Mandatory = $true)]
-                [System.Management.Automation.Host.KeyInfo]$Key
+                [System.ConsoleKeyInfo]$Key
             )
             Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -Context @{ Key = $Key.Key } -ScriptBlock {
                 $keybindingSvc = $this._services.Keybindings
@@ -334,10 +335,11 @@ function Get-HeliosDashboardScreen {
 
         $renderScript = {
             Invoke-WithErrorHandling -Component "$($this.Name).Render" -Context @{} -ScriptBlock {
-                if ($this._rootPanel -and $this._rootPanel.PSObject.Methods.Contains('Render')) {
+                if ($this._rootPanel -and ($this._rootPanel.PSObject.ScriptMethods.Name -contains 'Render')) {
                     $this._rootPanel.Render()
                 } else {
-                    Write-Log -Level Warn -Message "Dashboard Render: Root panel not found or missing Render method."
+                    # FIX: Use 'Warning' instead of 'Warn'
+                    Write-Log -Level Warning -Message "Dashboard Render: Root panel not found or missing Render method."
                 }
             }
         }

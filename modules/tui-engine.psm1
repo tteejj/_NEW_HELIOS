@@ -1,4 +1,3 @@
-####\modules\tui-engine.psm1
 # modules/tui-engine.psm1
 # PURPOSE: Core TUI rendering engine implementing the PowerShell-first architecture
 # Provides screen management, input processing, and frame rendering with recursive component tree traversal
@@ -284,10 +283,12 @@ function Process-SingleKeyInput {
     Invoke-WithErrorHandling -Component "TuiEngine.ProcessSingleKey" -Context @{ Key = $keyInfo.Key; Operation = "ProcessSingleKeyInput" } -ScriptBlock {
         # Handle Tab navigation
         if ($keyInfo.Key -eq [ConsoleKey]::Tab) {
-            # The focus-manager handles tab now, so this is a fallback or could be removed if focus-manager handles all cases.
-            # For now, we delegate to a shared function
             if (Get-Command Move-Focus -ErrorAction SilentlyContinue) {
-                Move-Focus -Reverse ($keyInfo.Modifiers -band [ConsoleModifiers]::Shift)
+                $moveFocusParams = @{}
+                if ($keyInfo.Modifiers -band [ConsoleModifiers]::Shift) {
+                    $moveFocusParams.Reverse = $true
+                }
+                Move-Focus @moveFocusParams
             }
             return
         }
@@ -300,14 +301,14 @@ function Process-SingleKeyInput {
 
         # Focused component gets next chance
         $focusedComponent = if (Get-Command Get-FocusedComponent -ErrorAction SilentlyContinue) { Get-FocusedComponent } else { $null }
-        if ($focusedComponent -and $focusedComponent.PSObject.ScriptMethods['HandleInput']) {
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'HandleInput')) {
             if ($focusedComponent.HandleInput($keyInfo)) {
                 return
             }
         }
 
         # Finally, the screen handles input
-        if ($global:TuiState.CurrentScreen -and $global:TuiState.CurrentScreen.PSObject.ScriptMethods['HandleInput']) {
+        if ($global:TuiState.CurrentScreen -and ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'HandleInput')) {
             $result = $global:TuiState.CurrentScreen.HandleInput($keyInfo)
             switch ($result) {
                 "Back" { if(Get-Command Pop-Screen -ErrorAction SilentlyContinue) { Pop-Screen } }
@@ -346,7 +347,7 @@ function Render-Frame {
             if (-not $component -or -not $component.Visible) { return }
             $renderQueue.Add($component)
 
-            if ($component.PSObject.Methods.Contains('CalculateLayout')) {
+            if (($component.PSObject.ScriptMethods.Name -contains 'CalculateLayout')) {
                 try {
                     $component.CalculateLayout()
                 } catch {
@@ -354,7 +355,7 @@ function Render-Frame {
                 }
             }
 
-            if ($component.PSObject.Properties.Contains('Children') -and $component.Children) {
+            if (($component.PSObject.Properties.Name -contains 'Children') -and $component.Children) {
                 foreach ($child in $component.Children) {
                     & $collectComponents $child
                 }
@@ -377,7 +378,7 @@ function Render-Frame {
         }
 
         foreach ($component in $sortedComponents) {
-            if ($component.PSObject.Methods.Contains('Render')) {
+            if (($component.PSObject.ScriptMethods.Name -contains 'Render')) {
                 Invoke-WithErrorHandling -Component "$($component.Name ?? $component.Type).Render" -Context @{ 
                     ComponentType = $component.Type;
                     ComponentName = $component.Name
@@ -474,12 +475,12 @@ function Push-Screen {
         Write-Log -Level Debug -Message "Pushing screen: $($Screen.Name)"
         
         $focusedComponent = if (Get-Command Get-FocusedComponent -ErrorAction SilentlyContinue) { Get-FocusedComponent } else { $null }
-        if ($focusedComponent -and $focusedComponent.PSObject.ScriptMethods['OnBlur']) {
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'OnBlur')) {
             $focusedComponent.OnBlur()
         }
         
         if ($global:TuiState.CurrentScreen) {
-            if ($global:TuiState.CurrentScreen.PSObject.ScriptMethods['OnExit']) {
+            if ($global:TuiState.CurrentScreen -and ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'OnExit')) {
                 $global:TuiState.CurrentScreen.OnExit()
             }
             $global:TuiState.ScreenStack.Push($global:TuiState.CurrentScreen)
@@ -487,19 +488,20 @@ function Push-Screen {
         
         $global:TuiState.CurrentScreen = $Screen
         
-        if ($Screen.PSObject.ScriptMethods['Init'] -and -not $Screen._isInitialized) {
+        if (($Screen.PSObject.ScriptMethods.Name -contains 'Init') -and -not $Screen._isInitialized) {
             if (-not $Services) { throw "Services object must be provided to initialize a screen."}
             $Screen.Init($Services)
             $Screen._isInitialized = $true
         }
         
-        if ($Screen.PSObject.Methods.Contains('OnEnter')) {
+        if (($Screen.PSObject.ScriptMethods.Name -contains 'OnEnter')) {
             $Screen.OnEnter()
         }
         
         Request-TuiRefresh
         
-        New-Event -SourceIdentifier 'PMC.Navigation.ScreenPushed' -MessageData @{ Screen = $Screen } -ErrorAction SilentlyContinue
+        # FIX: Use -EventArguments for robust data passing.
+        New-Event -SourceIdentifier 'PMC.Navigation.ScreenPushed' -EventArguments @($Screen) -ErrorAction SilentlyContinue
     }
 }
 
@@ -510,7 +512,7 @@ function Pop-Screen {
         Write-Log -Level Debug -Message "Popping screen"
         
         $focusedComponent = if (Get-Command Get-FocusedComponent -ErrorAction SilentlyContinue) { Get-FocusedComponent } else { $null }
-        if ($focusedComponent -and $focusedComponent.PSObject.ScriptMethods['OnBlur']) {
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'OnBlur')) {
             $focusedComponent.OnBlur()
         }
         
@@ -518,17 +520,18 @@ function Pop-Screen {
         
         $global:TuiState.CurrentScreen = $global:TuiState.ScreenStack.Pop()
         
-        if ($screenToExit -and $screenToExit.PSObject.ScriptMethods['OnExit']) {
+        if ($screenToExit -and ($screenToExit.PSObject.ScriptMethods.Name -contains 'OnExit')) {
             $screenToExit.OnExit()
         }
         
-        if ($global:TuiState.CurrentScreen -and $global:TuiState.CurrentScreen.PSObject.ScriptMethods['OnResume']) {
+        if ($global:TuiState.CurrentScreen -and ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'OnResume')) {
             $global:TuiState.CurrentScreen.OnResume()
         }
         
         Request-TuiRefresh
         
-        New-Event -SourceIdentifier 'PMC.Navigation.ScreenPopped' -MessageData @{ Screen = $global:TuiState.CurrentScreen } -ErrorAction SilentlyContinue
+        # FIX: Use -EventArguments for robust data passing.
+        New-Event -SourceIdentifier 'PMC.Navigation.ScreenPopped' -EventArguments @($global:TuiState.CurrentScreen) -ErrorAction SilentlyContinue
         
         return $true
     }
@@ -677,7 +680,12 @@ function Get-AnsiColorCode {
     }
     
     $code = $map[$Color.ToString()]
-    return if ($IsBackground) { $code + 10 } else { $code }
+    if ($IsBackground) {
+        return $code + 10
+    }
+    else {
+        return $code
+    }
 }
 
 function Get-WordWrappedLines {

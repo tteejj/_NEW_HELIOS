@@ -158,6 +158,8 @@ function Start-PMCTerminal {
             Load-PMCTerminalModules -Silent:$Silent
             Initialize-TuiEngine
             $global:Services = Initialize-PMCTerminalServices -Silent:$Silent
+            # FIX: Initialize the Focus Manager so it can subscribe to events.
+            Initialize-FocusManager
             Register-PMCTerminalScreens -Services $global:Services -Silent:$Silent
             
             if (-not $Silent) { Write-Host "`nStarting application..." -ForegroundColor Green }

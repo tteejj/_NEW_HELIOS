@@ -10,6 +10,8 @@ $component = [PSCustomObject]@{
     # Metadata
     Type = "Label"
     IsFocusable = $false
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -49,6 +51,8 @@ $component = [PSCustomObject]@{
     # Metadata
     Type = "Button"
     IsFocusable = $true
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -125,6 +129,8 @@ $component = [PSCustomObject]@{
     # Metadata
     Type = "TextBox"
     IsFocusable = $true
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -283,6 +289,8 @@ $component = [PSCustomObject]@{
     # Metadata
     Type = "CheckBox"
     IsFocusable = $true
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -346,6 +354,8 @@ $component = [PSCustomObject]@{
     # Metadata
     Type = "ProgressBar"
     IsFocusable = $false
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -396,6 +406,8 @@ $component = [PSCustomObject]@{
     # Metadata
     Type = "TextArea"
     IsFocusable = $true
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -678,6 +690,8 @@ param([hashtable]$Props = @{})
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     Type = "CalendarPicker"
+    Parent = $null
+    LayoutProps = @{}
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
     Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
     Width = if ($null -ne $Props.Width) { $Props.Width } else { 30 }
@@ -883,6 +897,8 @@ $component = [PSCustomObject]@{
     Type = "TimePicker"
     IsFocusable = $true
     IsFocused = $false
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -982,6 +998,8 @@ $component = [PSCustomObject]@{
     # Metadata
     Type = "DataTable"
     IsFocusable = if ($null -ne $Props.IsFocusable) { $Props.IsFocusable } else { $true }
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }

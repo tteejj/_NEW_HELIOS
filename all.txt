@@ -1,5 +1,4 @@
 ####\modules\dialog-system.psm1
-####\modules\dialog-system.psm1
 #
 # MODULE: modules/dialog-system.psm1
 #
@@ -67,11 +66,11 @@ function Find-DialogFocusableComponents {
         $current = $queue.Dequeue()
         if (-not $current) { continue }
 
-        if ($current.PSObject.Properties['IsFocusable'] -and $current.IsFocusable -and $current.PSObject.Properties['Visible'] -and $current.Visible) {
+        if (($current.PSObject.Properties.Name -contains 'IsFocusable') -and $current.IsFocusable -and ($current.PSObject.Properties.Name -contains 'Visible') -and $current.Visible) {
             $focusable.Add($current)
         }
 
-        if ($current.PSObject.Properties['Children']) {
+        if (($current.PSObject.Properties.Name -contains 'Children') -and $current.Children) {
             foreach ($child in $current.Children) {
                 $queue.Enqueue($child)
             }
@@ -105,7 +104,7 @@ function Show-ActiveDialog {
 
         # Build the tab order for the new dialog.
         $DialogSystem.DialogTabOrder.Clear()
-        $focusableComponents = Find-DialogFocusableComponents -RootComponent $DialogPanel
+        $focusableComponents = @(Find-DialogFocusableComponents -RootComponent $DialogPanel)
         $DialogSystem.DialogTabOrder.AddRange($focusableComponents)
         Write-Log -Level Trace -Message "Dialog has $($DialogSystem.DialogTabOrder.Count) focusable components."
 
@@ -341,7 +340,8 @@ function Handle-DialogInput {
     [OutputType([bool])]
     param(
         [Parameter(Mandatory = $true)]
-        [System.Management.Automation.Host.KeyInfo]$Key
+        # FIX: Standardize on System.ConsoleKeyInfo
+        [System.ConsoleKeyInfo]$Key
     )
 
     if (-not $DialogSystem.CurrentDialog) {
@@ -366,7 +366,7 @@ function Handle-DialogInput {
 
         # Dispatch input to the currently focused component within the dialog
         $focusedComponent = Get-FocusedComponent
-        if ($focusedComponent -and $focusedComponent.PSObject.ScriptMethods['HandleInput']) {
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'HandleInput')) {
             # If the component's HandleInput returns $true, it handled the key.
             if ($focusedComponent.HandleInput($Key)) {
                 return
@@ -382,6 +382,264 @@ function Handle-DialogInput {
 #endregion
 
 Export-ModuleMember -Function Show-ConfirmDialog, Show-AlertDialog, Get-ActiveDialog, Handle-DialogInput
+
+
+####\modules\event-system.psm1
+# FILE: modules/event-system.psm1
+# PURPOSE: Provides PowerShell native eventing functionality for the PMC Terminal v5 application.
+#          Services use this to announce state changes, and UI components subscribe to these events
+#          to maintain synchronization. Follows the PowerShell-First architectural principles.
+
+Set-StrictMode -Version Latest
+
+#region Core Event Management Functions
+
+function Initialize-HeliosEventSystem {
+    <#
+    .SYNOPSIS
+        Initializes the Helios event system for the application.
+    .DESCRIPTION
+        Sets up the core event infrastructure and registers any global event handlers
+        needed by the application framework.
+    .OUTPUTS
+        [PSCustomObject] Event system manager object
+    #>
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param()
+    
+    Invoke-WithErrorHandling -Component "Initialize-HeliosEventSystem" -Context @{} -ScriptBlock {
+        Write-Log -Level Debug -Message "Initializing Helios Event System..."
+        
+        $eventSystem = [PSCustomObject]@{
+            Name = "HeliosEventSystem"
+            RegisteredSources = [System.Collections.Generic.HashSet[string]]::new()
+            ActiveSubscriptions = [System.Collections.ArrayList]::new()
+        }
+        
+        # Add methods for managing event sources
+        $registerSourceScript = {
+            param([string]$SourceIdentifier)
+            
+            if ([string]::IsNullOrWhiteSpace($SourceIdentifier)) {
+                throw "SourceIdentifier cannot be null or empty"
+            }
+            
+            if ($this.RegisteredSources.Contains($SourceIdentifier)) {
+                Write-Log -Level Debug -Message "Event source '$SourceIdentifier' already registered"
+                return
+            }
+            
+            try {
+                Register-EngineEvent -SourceIdentifier $SourceIdentifier -Action {}
+                [void]$this.RegisteredSources.Add($SourceIdentifier)
+                Write-Log -Level Debug -Message "Registered event source: $SourceIdentifier"
+            }
+            catch {
+                Write-Log -Level Error -Message "Failed to register event source '$SourceIdentifier': $($_.Exception.Message)"
+                throw
+            }
+        }
+        $eventSystem | Add-Member -MemberType ScriptMethod -Name RegisterSource -Value $registerSourceScript
+        
+        # Add method for publishing events
+        $publishEventScript = {
+            param(
+                [string]$SourceIdentifier,
+                [string]$EventIdentifier,
+                [object]$EventData = $null
+            )
+            
+            if ([string]::IsNullOrWhiteSpace($SourceIdentifier)) {
+                throw "SourceIdentifier cannot be null or empty"
+            }
+            if ([string]::IsNullOrWhiteSpace($EventIdentifier)) {
+                throw "EventIdentifier cannot be null or empty"
+            }
+            
+            try {
+                $eventArgs = @{
+                    SourceIdentifier = $SourceIdentifier
+                    EventIdentifier = $EventIdentifier
+                    Sender = $SourceIdentifier
+                    EventArguments = @($EventData)
+                }
+                
+                New-Event @eventArgs
+                Write-Log -Level Trace -Message "Published event: $SourceIdentifier.$EventIdentifier"
+            }
+            catch {
+                Write-Log -Level Error -Message "Failed to publish event '$SourceIdentifier.$EventIdentifier': $($_.Exception.Message)"
+                throw
+            }
+        }
+        $eventSystem | Add-Member -MemberType ScriptMethod -Name PublishEvent -Value $publishEventScript
+        
+        # Add method for subscribing to events
+        $subscribeToEventScript = {
+            param(
+                [string]$SourceIdentifier,
+                [string]$EventIdentifier,
+                [scriptblock]$Action,
+                [string]$SubscriptionName = $null
+            )
+            
+            if ([string]::IsNullOrWhiteSpace($SourceIdentifier)) {
+                throw "SourceIdentifier cannot be null or empty"
+            }
+            if ([string]::IsNullOrWhiteSpace($EventIdentifier)) {
+                throw "EventIdentifier cannot be null or empty"
+            }
+            if (-not $Action) {
+                throw "Action scriptblock cannot be null"
+            }
+            
+            try {
+                $subscription = Register-ObjectEvent -InputObject $SourceIdentifier -EventName $EventIdentifier -Action $Action
+                if ($SubscriptionName) {
+                    $subscription | Add-Member -MemberType NoteProperty -Name "FriendlyName" -Value $SubscriptionName
+                }
+                
+                [void]$this.ActiveSubscriptions.Add($subscription)
+                Write-Log -Level Debug -Message "Created event subscription: $SourceIdentifier.$EventIdentifier"
+                return $subscription
+            }
+            catch {
+                Write-Log -Level Error -Message "Failed to subscribe to event '$SourceIdentifier.$EventIdentifier': $($_.Exception.Message)"
+                throw
+            }
+        }
+        $eventSystem | Add-Member -MemberType ScriptMethod -Name SubscribeToEvent -Value $subscribeToEventScript
+        
+        # Add cleanup method
+        $cleanupScript = {
+            Write-Log -Level Debug -Message "Cleaning up Helios Event System..."
+            
+            foreach ($subscription in $this.ActiveSubscriptions) {
+                try {
+                    Unregister-Event -SubscriptionId $subscription.Id -ErrorAction SilentlyContinue
+                }
+                catch {
+                    # FIX: Use 'Warning' instead of 'Warn'
+                    Write-Log -Level Warning -Message "Failed to unregister subscription $($subscription.Id): $($_.Exception.Message)"
+                }
+            }
+            $this.ActiveSubscriptions.Clear()
+            
+            foreach ($source in $this.RegisteredSources) {
+                try {
+                    Get-Event -SourceIdentifier $source -ErrorAction SilentlyContinue | Remove-Event -ErrorAction SilentlyContinue
+                }
+                catch {
+                    # FIX: Use 'Warning' instead of 'Warn'
+                    Write-Log -Level Warning -Message "Failed to cleanup events for source '$source': $($_.Exception.Message)"
+                }
+            }
+            $this.RegisteredSources.Clear()
+            
+            Write-Log -Level Debug -Message "Event system cleanup completed"
+        }
+        $eventSystem | Add-Member -MemberType ScriptMethod -Name Cleanup -Value $cleanupScript
+        
+        Write-Log -Level Info -Message "Helios Event System initialized successfully"
+        return $eventSystem
+    }
+}
+
+function Publish-HeliosEvent {
+    <#
+    .SYNOPSIS
+        Publishes an event through the Helios event system.
+    .DESCRIPTION
+        Convenience function for publishing events. Services should use this to announce state changes.
+    .PARAMETER SourceIdentifier
+        The source that is publishing the event (typically the service name)
+    .PARAMETER EventIdentifier
+        The specific event being published
+    .PARAMETER EventData
+        Optional data to include with the event
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceIdentifier,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$EventIdentifier,
+        
+        [Parameter()]
+        [object]$EventData = $null
+    )
+    
+    Invoke-WithErrorHandling -Component "Publish-HeliosEvent" -Context @{ Source = $SourceIdentifier; Event = $EventIdentifier } -ScriptBlock {
+        $eventArgs = @{
+            SourceIdentifier = $SourceIdentifier
+            EventIdentifier = $EventIdentifier
+            Sender = $SourceIdentifier
+            EventArguments = @($EventData)
+        }
+        
+        New-Event @eventArgs
+        Write-Log -Level Trace -Message "Event published: $SourceIdentifier.$EventIdentifier"
+    }
+}
+
+function Subscribe-HeliosEvent {
+    <#
+    .SYNOPSIS
+        Subscribes to an event in the Helios event system.
+    .DESCRIPTION
+        Convenience function for subscribing to events. UI components should use this to react to service state changes.
+    .PARAMETER SourceIdentifier
+        The source to subscribe to
+    .PARAMETER EventIdentifier
+        The specific event to subscribe to
+    .PARAMETER Action
+        The scriptblock to execute when the event occurs
+    .PARAMETER SubscriptionName
+        Optional friendly name for the subscription
+    .OUTPUTS
+        [System.Management.Automation.PSEventJob] The event subscription object
+    #>
+    [CmdletBinding()]
+    [OutputType([System.Management.Automation.PSEventJob])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceIdentifier,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$EventIdentifier,
+        
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Action,
+        
+        [Parameter()]
+        [string]$SubscriptionName = $null
+    )
+    
+    Invoke-WithErrorHandling -Component "Subscribe-HeliosEvent" -Context @{ Source = $SourceIdentifier; Event = $EventIdentifier } -ScriptBlock {
+        $subscription = Register-ObjectEvent -InputObject $SourceIdentifier -EventName $EventIdentifier -Action $Action
+        
+        if ($SubscriptionName) {
+            $subscription | Add-Member -MemberType NoteProperty -Name "FriendlyName" -Value $SubscriptionName -Force
+        }
+        
+        Write-Log -Level Debug -Message "Event subscription created: $SourceIdentifier.$EventIdentifier"
+        return $subscription
+    }
+}
+
+#endregion
+
+#region Export Module Members
+
+Export-ModuleMember -Function @(
+    'Initialize-HeliosEventSystem',
+    'Publish-HeliosEvent', 
+    'Subscribe-HeliosEvent'
+)
+
+#endregion
 
 
 ####\modules\exceptions.psm1
@@ -648,7 +906,6 @@ Export-ModuleMember -Function @(
 
 
 ####\modules\focus-manager.psm1
-####\modules\focus-manager.psm1
 #
 # MODULE: modules/focus-manager.psm1
 #
@@ -708,12 +965,12 @@ function Find-FocusableComponents {
         if (-not $current) { continue }
 
         # A component is focusable if it's visible and has the IsFocusable property set to true.
-        if ($current.PSObject.Properties['IsFocusable'] -and $current.IsFocusable -and $current.PSObject.Properties['Visible'] -and $current.Visible) {
+        if (($current.PSObject.Properties.Name -contains 'IsFocusable') -and $current.IsFocusable -and ($current.PSObject.Properties.Name -contains 'Visible') -and $current.Visible) {
             $focusable.Add($current)
         }
 
         # Recurse into children. The Helios layout system uses a 'Children' property.
-        if ($current.PSObject.Properties['Children']) {
+        if (($current.PSObject.Properties.Name -contains 'Children') -and $current.Children) {
             foreach ($child in $current.Children) {
                 $queue.Enqueue($child)
             }
@@ -737,12 +994,12 @@ function Update-TabOrderAndFocus {
         Request-Focus -Component $null -Reason 'ScreenChange'
 
         if (-not $Screen.RootPanel) {
-            Write-Log -Level Warn -Message "Screen '$($Screen.Name)' has no RootPanel. Cannot establish focus."
+            Write-Log -Level Warning -Message "Screen '$($Screen.Name)' has no RootPanel. Cannot establish focus."
             return
         }
 
         # Find all focusable components and establish the new tab order
-        $focusableComponents = Find-FocusableComponents -RootComponent $Screen.RootPanel
+        $focusableComponents = @(Find-FocusableComponents -RootComponent $Screen.RootPanel)
         $FocusManager.TabOrder.AddRange($focusableComponents)
 
         Write-Log -Level Debug -Message "Found $($FocusManager.TabOrder.Count) focusable components on screen '$($Screen.Name)'"
@@ -789,13 +1046,14 @@ function Initialize-FocusManager {
         # Create the handler scriptblock. It receives the event and updates the tab order.
         $handler = {
             param($Event)
-            Invoke-WithErrorHandling -Component 'FocusManager.ScreenPushedHandler' -Context @{ EventData = $Event.MessageData } -ScriptBlock {
-                $screen = $Event.MessageData.Screen
-                if ($screen) {
+            Invoke-WithErrorHandling -Component 'FocusManager.ScreenPushedHandler' -Context @{ EventSourceArgsCount = $Event.SourceArgs.Count } -ScriptBlock {
+                # FIX: Get the screen object from the first event argument.
+                if ($Event.SourceArgs.Count -gt 0) {
+                    $screen = $Event.SourceArgs[0]
                     Update-TabOrderAndFocus -Screen $screen
                 }
                 else {
-                    Write-Log -Level Warn -Message 'Screen.Pushed event received without a screen object.'
+                    Write-Log -Level Warning -Message 'Screen.Pushed event received with no event arguments.'
                 }
             }
         }
@@ -831,7 +1089,7 @@ function Request-Focus {
 
     Invoke-WithErrorHandling -Component 'FocusManager.RequestFocus' -Context @{ TargetComponent = $Component.Name; Reason = $Reason } -ScriptBlock {
         # Defensively check if the target component is actually focusable.
-        if ($Component -and $Component.PSObject.Properties['IsFocusable'] -and -not $Component.IsFocusable) {
+        if ($Component -and ($Component.PSObject.Properties.Name -contains 'IsFocusable') -and -not $Component.IsFocusable) {
             Write-Log -Level Debug -Message "Request-Focus ignored for non-focusable component '$($Component.Name)'"
             return
         }
@@ -846,7 +1104,7 @@ function Request-Focus {
         # 1. Blur the previously focused component
         if ($oldFocused) {
             $oldFocused.IsFocused = $false
-            if ($oldFocused.PSObject.ScriptMethods['OnBlur']) {
+            if (($oldFocused.PSObject.ScriptMethods.Name -contains 'OnBlur')) {
                 try {
                     $oldFocused.OnBlur()
                     Write-Log -Level Trace -Message "Called OnBlur for component '$($oldFocused.Name)'"
@@ -864,7 +1122,7 @@ function Request-Focus {
         # 3. Focus the new component
         if ($Component) {
             $Component.IsFocused = $true
-            if ($Component.PSObject.ScriptMethods['OnFocus']) {
+            if (($Component.PSObject.ScriptMethods.Name -contains 'OnFocus')) {
                 try {
                     $Component.OnFocus()
                     Write-Log -Level Trace -Message "Called OnFocus for component '$($Component.Name)'"
@@ -1607,14 +1865,13 @@ Export-ModuleMember -Function @(
 
 
 ####\modules\tui-engine.psm1
-####\modules\tui-engine.psm1
 # modules/tui-engine.psm1
 # PURPOSE: Core TUI rendering engine implementing the PowerShell-first architecture
 # Provides screen management, input processing, and frame rendering with recursive component tree traversal
 
 #region Module Dependencies
-Import-Module "$PSScriptRoot\logger.psm1" -Force
-Import-Module "$PSScriptRoot\exceptions.psm1" -Force
+#Import-Module "$PSScriptRoot\logger.psm1" -Force
+#Import-Module "$PSScriptRoot\exceptions.psm1" -Force
 # NOTE: event-system removed - using PowerShell native eventing
 
 #endregion
@@ -1699,7 +1956,7 @@ function Initialize-TuiEngine {
         $ErrorActionPreference = 'SilentlyContinue'
         Unregister-Event -SourceIdentifier 'TuiEngine.System' -ErrorAction SilentlyContinue
         $ErrorActionPreference = 'Stop'
-        Register-EngineEvent -SourceIdentifier 'TuiEngine.System' -SupportEvent
+        # Note: We don't need Register-EngineEvent here since New-Event will create the source automatically
         
         # Announce initialization
         New-Event -SourceIdentifier 'TuiEngine.System' -EventArguments @{ 
@@ -1893,10 +2150,12 @@ function Process-SingleKeyInput {
     Invoke-WithErrorHandling -Component "TuiEngine.ProcessSingleKey" -Context @{ Key = $keyInfo.Key; Operation = "ProcessSingleKeyInput" } -ScriptBlock {
         # Handle Tab navigation
         if ($keyInfo.Key -eq [ConsoleKey]::Tab) {
-            # The focus-manager handles tab now, so this is a fallback or could be removed if focus-manager handles all cases.
-            # For now, we delegate to a shared function
             if (Get-Command Move-Focus -ErrorAction SilentlyContinue) {
-                Move-Focus -Reverse ($keyInfo.Modifiers -band [ConsoleModifiers]::Shift)
+                $moveFocusParams = @{}
+                if ($keyInfo.Modifiers -band [ConsoleModifiers]::Shift) {
+                    $moveFocusParams.Reverse = $true
+                }
+                Move-Focus @moveFocusParams
             }
             return
         }
@@ -1909,14 +2168,14 @@ function Process-SingleKeyInput {
 
         # Focused component gets next chance
         $focusedComponent = if (Get-Command Get-FocusedComponent -ErrorAction SilentlyContinue) { Get-FocusedComponent } else { $null }
-        if ($focusedComponent -and $focusedComponent.PSObject.ScriptMethods['HandleInput']) {
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'HandleInput')) {
             if ($focusedComponent.HandleInput($keyInfo)) {
                 return
             }
         }
 
         # Finally, the screen handles input
-        if ($global:TuiState.CurrentScreen -and $global:TuiState.CurrentScreen.PSObject.ScriptMethods['HandleInput']) {
+        if ($global:TuiState.CurrentScreen -and ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'HandleInput')) {
             $result = $global:TuiState.CurrentScreen.HandleInput($keyInfo)
             switch ($result) {
                 "Back" { if(Get-Command Pop-Screen -ErrorAction SilentlyContinue) { Pop-Screen } }
@@ -1955,7 +2214,7 @@ function Render-Frame {
             if (-not $component -or -not $component.Visible) { return }
             $renderQueue.Add($component)
 
-            if ($component.PSObject.Methods.Contains('CalculateLayout')) {
+            if (($component.PSObject.ScriptMethods.Name -contains 'CalculateLayout')) {
                 try {
                     $component.CalculateLayout()
                 } catch {
@@ -1963,7 +2222,7 @@ function Render-Frame {
                 }
             }
 
-            if ($component.PSObject.Properties.Contains('Children') -and $component.Children) {
+            if (($component.PSObject.Properties.Name -contains 'Children') -and $component.Children) {
                 foreach ($child in $component.Children) {
                     & $collectComponents $child
                 }
@@ -1986,7 +2245,7 @@ function Render-Frame {
         }
 
         foreach ($component in $sortedComponents) {
-            if ($component.PSObject.Methods.Contains('Render')) {
+            if (($component.PSObject.ScriptMethods.Name -contains 'Render')) {
                 Invoke-WithErrorHandling -Component "$($component.Name ?? $component.Type).Render" -Context @{ 
                     ComponentType = $component.Type;
                     ComponentName = $component.Name
@@ -2074,7 +2333,7 @@ function Render-BufferOptimized {
 function Push-Screen {
     param(
         [PSCustomObject]$Screen,
-        [hashtable]$Services
+        [PSCustomObject]$Services
     )
     
     if (-not $Screen) { return }
@@ -2083,12 +2342,12 @@ function Push-Screen {
         Write-Log -Level Debug -Message "Pushing screen: $($Screen.Name)"
         
         $focusedComponent = if (Get-Command Get-FocusedComponent -ErrorAction SilentlyContinue) { Get-FocusedComponent } else { $null }
-        if ($focusedComponent -and $focusedComponent.PSObject.ScriptMethods['OnBlur']) {
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'OnBlur')) {
             $focusedComponent.OnBlur()
         }
         
         if ($global:TuiState.CurrentScreen) {
-            if ($global:TuiState.CurrentScreen.PSObject.ScriptMethods['OnExit']) {
+            if ($global:TuiState.CurrentScreen -and ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'OnExit')) {
                 $global:TuiState.CurrentScreen.OnExit()
             }
             $global:TuiState.ScreenStack.Push($global:TuiState.CurrentScreen)
@@ -2096,19 +2355,20 @@ function Push-Screen {
         
         $global:TuiState.CurrentScreen = $Screen
         
-        if ($Screen.PSObject.ScriptMethods['Init'] -and -not $Screen._isInitialized) {
+        if (($Screen.PSObject.ScriptMethods.Name -contains 'Init') -and -not $Screen._isInitialized) {
             if (-not $Services) { throw "Services object must be provided to initialize a screen."}
             $Screen.Init($Services)
             $Screen._isInitialized = $true
         }
         
-        if ($Screen.PSObject.Methods.Contains('OnEnter')) {
+        if (($Screen.PSObject.ScriptMethods.Name -contains 'OnEnter')) {
             $Screen.OnEnter()
         }
         
         Request-TuiRefresh
         
-        New-Event -SourceIdentifier 'PMC.Navigation.ScreenPushed' -MessageData @{ Screen = $Screen } -ErrorAction SilentlyContinue
+        # FIX: Use -EventArguments for robust data passing.
+        New-Event -SourceIdentifier 'PMC.Navigation.ScreenPushed' -EventArguments @($Screen) -ErrorAction SilentlyContinue
     }
 }
 
@@ -2119,7 +2379,7 @@ function Pop-Screen {
         Write-Log -Level Debug -Message "Popping screen"
         
         $focusedComponent = if (Get-Command Get-FocusedComponent -ErrorAction SilentlyContinue) { Get-FocusedComponent } else { $null }
-        if ($focusedComponent -and $focusedComponent.PSObject.ScriptMethods['OnBlur']) {
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'OnBlur')) {
             $focusedComponent.OnBlur()
         }
         
@@ -2127,17 +2387,18 @@ function Pop-Screen {
         
         $global:TuiState.CurrentScreen = $global:TuiState.ScreenStack.Pop()
         
-        if ($screenToExit -and $screenToExit.PSObject.ScriptMethods['OnExit']) {
+        if ($screenToExit -and ($screenToExit.PSObject.ScriptMethods.Name -contains 'OnExit')) {
             $screenToExit.OnExit()
         }
         
-        if ($global:TuiState.CurrentScreen -and $global:TuiState.CurrentScreen.PSObject.ScriptMethods['OnResume']) {
+        if ($global:TuiState.CurrentScreen -and ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'OnResume')) {
             $global:TuiState.CurrentScreen.OnResume()
         }
         
         Request-TuiRefresh
         
-        New-Event -SourceIdentifier 'PMC.Navigation.ScreenPopped' -MessageData @{ Screen = $global:TuiState.CurrentScreen } -ErrorAction SilentlyContinue
+        # FIX: Use -EventArguments for robust data passing.
+        New-Event -SourceIdentifier 'PMC.Navigation.ScreenPopped' -EventArguments @($global:TuiState.CurrentScreen) -ErrorAction SilentlyContinue
         
         return $true
     }
@@ -2286,7 +2547,12 @@ function Get-AnsiColorCode {
     }
     
     $code = $map[$Color.ToString()]
-    return if ($IsBackground) { $code + 10 } else { $code }
+    if ($IsBackground) {
+        return $code + 10
+    }
+    else {
+        return $code
+    }
 }
 
 function Get-WordWrappedLines {
@@ -2375,13 +2641,6 @@ Export-ModuleMember -Function @(
 #          using a simple menu of Helios buttons. It adheres to the PowerShell-First
 #          architectural principles, using PSCustomObject for the screen and
 #          direct service method calls for interactions.
-#DONT USE.->MAIN
-#using module '../modules/logger.psm1'
-#using module '../modules/exceptions.psm1'
-#using module '../ui/helios-components.psm1'
-#using module '../ui/helios-panels.psm1'
-# Assuming tui-engine provides Get-ThemeColor, Request-TuiRefresh, Request-Focus
-# and other core TUI functions.
 
 function Get-HeliosDashboardScreen {
     <#
@@ -2423,6 +2682,7 @@ function Get-HeliosDashboardScreen {
         $screen = [PSCustomObject]@{
             Name                  = "HeliosDashboardScreen"
             _services             = $Services # Store the services for later use
+            _isInitialized        = $false 
             _eventSubscriptions   = [System.Collections.ArrayList]::new() # For future event cleanup
             _rootPanel            = $null
             _menuButtons          = [System.Collections.ArrayList]::new() # To manage focus
@@ -2552,7 +2812,8 @@ function Get-HeliosDashboardScreen {
                 # Using Where-Object and Select-Object to ensure we work with an array of focusable buttons
                 $focusableButtons = ($this._menuButtons | Where-Object { $_.IsFocusable }).ToArray()
                 if ($focusableButtons.Count -eq 0) {
-                    Write-Log -Level Warn -Message "No focusable buttons found on dashboard."
+                    # FIX: Use 'Warning' instead of 'Warn'
+                    Write-Log -Level Warning -Message "No focusable buttons found on dashboard."
                     return
                 }
 
@@ -2581,16 +2842,14 @@ function Get-HeliosDashboardScreen {
                 if ($newButton -eq $currentFocusedButton) { return }
 
                 # Remove focus from old button
-                if ($currentFocusedButton -and $currentFocusedButton.PSObject.Properties.Contains('IsFocused')) {
+                if ($currentFocusedButton -and ($currentFocusedButton.PSObject.Properties.Name -contains 'IsFocused')) {
                     $currentFocusedButton.IsFocused = $false
                 }
 
                 # Set focus to new button
-                if ($newButton -and $newButton.PSObject.Properties.Contains('IsFocused')) {
+                if ($newButton -and ($newButton.PSObject.Properties.Name -contains 'IsFocused')) {
                     $newButton.IsFocused = $true
                     # Inform TUI engine about new focus via Request-Focus
-                    # Request-Focus is provided by focus-manager.psm1, imported by dialog-system.psm1 (which is imported by Start-PMCTerminal)
-                    # and also by tui-engine.psm1 directly, so it should be available.
                     Request-Focus -Component $newButton -Reason 'DashboardMenuNavigation'
                     
                     # Update _focusedButtonIndex to the index of the actual button in the _menuButtons list
@@ -2646,7 +2905,8 @@ function Get-HeliosDashboardScreen {
                         Unregister-Event -SubscriptionId $sub.Id
                         Write-Log -Level Debug -Message "Unregistered event subscription: $($sub.Id)"
                     } catch {
-                        Write-Log -Level Warn -Message "Failed to unregister event subscription $($sub.Id): $($_.Exception.Message)"
+                        # FIX: Use 'Warning' instead of 'Warn'
+                        Write-Log -Level Warning -Message "Failed to unregister event subscription $($sub.Id): $($_.Exception.Message)"
                     }
                 }
                 $this._eventSubscriptions.Clear()
@@ -2658,7 +2918,7 @@ function Get-HeliosDashboardScreen {
         $handleInputScript = {
             param(
                 [Parameter(Mandatory = $true)]
-                [System.Management.Automation.Host.KeyInfo]$Key
+                [System.ConsoleKeyInfo]$Key
             )
             Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -Context @{ Key = $Key.Key } -ScriptBlock {
                 $keybindingSvc = $this._services.Keybindings
@@ -2706,24 +2966,18 @@ function Get-HeliosDashboardScreen {
                 # If it were a sub-screen, it would use $this._services.Navigation.Back() here.
 
                 return $handled
-            } -ErrorHandler {
-                param($Exception)
-                Write-Log -Level Error -Message "Dashboard HandleInput error: $($Exception.Message)" -Data $Exception.Context
-                return $false
             }
         }
         $screen | Add-Member -MemberType ScriptMethod -Name HandleInput -Value $handleInputScript
 
         $renderScript = {
             Invoke-WithErrorHandling -Component "$($this.Name).Render" -Context @{} -ScriptBlock {
-                if ($this._rootPanel -and $this._rootPanel.PSObject.Methods.Contains('Render')) {
+                if ($this._rootPanel -and ($this._rootPanel.PSObject.ScriptMethods.Name -contains 'Render')) {
                     $this._rootPanel.Render()
                 } else {
-                    Write-Log -Level Warn -Message "Dashboard Render: Root panel not found or missing Render method."
+                    # FIX: Use 'Warning' instead of 'Warn'
+                    Write-Log -Level Warning -Message "Dashboard Render: Root panel not found or missing Render method."
                 }
-            } -ErrorHandler {
-                param($Exception)
-                Write-Log -Level Error -Message "Dashboard Render error: $($Exception.Message)" -Data $Exception.Context
             }
         }
         $screen | Add-Member -MemberType ScriptMethod -Name Render -Value $renderScript
@@ -2740,10 +2994,6 @@ function Get-HeliosDashboardScreen {
         $screen.PSObject.Properties.Add([psnoteproperty]::new('RootPanel', $screen._rootPanel))
 
         return $screen
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Fatal -Message "Failed to create Helios Dashboard Screen: $($Exception.Message)" -Data $Exception.Context
-        throw # Re-throw to main application error handler
     }
 }
 
@@ -2794,6 +3044,7 @@ function Get-HeliosTaskScreen {
     $screen = [PSCustomObject]@{
         Name                  = "HeliosTaskScreen"
         _services             = $null
+        _isInitialized        = $false
         _eventSubscriptions   = [System.Collections.ArrayList]@()
         _rootPanel            = $null
         _listPanel            = $null
@@ -2966,7 +3217,8 @@ function Get-HeliosTaskScreen {
                 $taskToEdit = $this._dataTable.SelectedItem
             }
             if (-not $taskToEdit) {
-                Write-Log -Level Warn -Message "Edit action triggered, but no task is selected."
+                # FIX: Use 'Warning' instead of 'Warn'
+                Write-Log -Level Warning -Message "Edit action triggered, but no task is selected."
                 # Optionally show an alert dialog here
                 return
             }
@@ -2985,7 +3237,8 @@ function Get-HeliosTaskScreen {
                 $taskToDelete = $this._dataTable.SelectedItem
             }
             if (-not $taskToDelete) {
-                Write-Log -Level Warn -Message "Delete action triggered, but no task is selected."
+                # FIX: Use 'Warning' instead of 'Warn'
+                Write-Log -Level Warning -Message "Delete action triggered, but no task is selected."
                 return
             }
 
@@ -3031,14 +3284,14 @@ function Get-HeliosTaskScreen {
     $initScript = {
         param(
             [Parameter(Mandatory = $true)]
-            [hashtable]$services
+            [PSCustomObject]$services
         )
         Invoke-WithErrorHandling -Component "$($this.Name).Init" -Context @{} -ScriptBlock {
             Write-Log -Level Info -Message "Initializing Task Screen."
             # Defensive programming: ensure required services are provided
             if (-not $services) { throw "Services hashtable cannot be null." }
             if (-not $services.Task) { throw "TaskService is missing from services." }
-            if (-not $services.Keybinding) { throw "KeybindingService is missing from services." }
+            if (-not $services.Keybindings) { throw "KeybindingService is missing from services." }
 
             $this._services = $services
 
@@ -3070,7 +3323,8 @@ function Get-HeliosTaskScreen {
                     Unregister-Event -SubscriptionId $sub.Id
                 }
                 catch {
-                    Write-Log -Level Warn -Message "Failed to unregister event subscription $($sub.Id): $_"
+                    # FIX: Use 'Warning' instead of 'Warn'
+                    Write-Log -Level Warning -Message "Failed to unregister event subscription $($sub.Id): $_"
                 }
             }
             $this._eventSubscriptions.Clear()
@@ -3081,7 +3335,7 @@ function Get-HeliosTaskScreen {
     $handleInputScript = {
         param(
             [Parameter(Mandatory = $true)]
-            [System.Management.Automation.Host.KeyInfo]$Key
+            [System.ConsoleKeyInfo]$Key
         )
 
         # Input is only handled at the screen level if the list panel is visible.
@@ -3091,7 +3345,7 @@ function Get-HeliosTaskScreen {
         }
 
         Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -Context @{ Key = $Key.Key } -ScriptBlock {
-            $keybindingSvc = $this._services.Keybinding
+            $keybindingSvc = $this._services.Keybindings
             if ($keybindingSvc.IsAction('list.new', $Key))    { $this._NewTask(); return $true }
             if ($keybindingSvc.IsAction('list.edit', $Key))   { $this._EditTask($null); return $true }
             if ($keybindingSvc.IsAction('list.delete', $Key)) { $this._DeleteTask($null); return $true }
@@ -3104,7 +3358,7 @@ function Get-HeliosTaskScreen {
     # The Render method for a screen is simple: it just renders its root panel.
     # The TUI engine will then recursively render the children of the root panel.
     $renderScript = {
-        if ($this._rootPanel -and $this._rootPanel.PSObject.Methods['Render']) {
+        if ($this._rootPanel -and ($this._rootPanel.PSObject.ScriptMethods.Name -contains 'Render')) {
             $this._rootPanel.Render()
         }
     }
@@ -3264,7 +3518,6 @@ Export-ModuleMember -Function "Initialize-KeybindingService"
 
 
 ####\services\navigation.psm1
-####\services\navigation.psm1
 # FILE: services/navigation.psm1
 # PURPOSE: Provides a centralized service for managing screen navigation and routing.
 # This service encapsulates all logic related to moving between different views in the application.
@@ -3304,7 +3557,7 @@ function Initialize-NavigationService {
             [Parameter(Mandatory)]
             [string]$Path,
             [Parameter(Mandatory)]
-            [hashtable]$Services
+            [PSCustomObject]$Services
         )
 
         Invoke-WithErrorHandling -Component "$($this.Name).GoTo" -Context @{ Path = $Path } -ScriptBlock {
@@ -3321,7 +3574,11 @@ function Initialize-NavigationService {
 
             Write-Log -Level Info -Message "Navigating to path: $Path"
             $factory = $this._routes[$lookupPath]
+            
+            # FIXED: Call the factory scriptblock directly with the dot operator
+            # This preserves the closure context for $using: variables
             $screen = & $factory $Services
+            
             if ($null -eq $screen) {
                 throw "The screen factory for path '$Path' did not return a valid screen object."
             }
@@ -3380,11 +3637,6 @@ Unregister-Event -SourceIdentifier 'TaskService'
 $ErrorActionPreference = 'Stop'
 
 
-# Register the event source that this service will use to broadcast changes.
-# Screens can subscribe to this to know when to refresh their data.
-Register-EngineEvent -SourceIdentifier 'TaskService' -SupportEvent
-
-
 function Initialize-TaskService {
     <#
     .SYNOPSIS
@@ -3411,7 +3663,6 @@ function Initialize-TaskService {
 
     # Method to broadcast that the task list has changed.
     $announceChangeScript = {
-        # FIX: Changed Context from string to hashtable
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'AnnounceChange' } -ScriptBlock {
             Write-Log -Level Trace -Message "Broadcasting 'Tasks.Changed' event from SourceIdentifier 'TaskService'."
             New-Event -SourceIdentifier 'TaskService' -EventIdentifier 'Tasks.Changed'
@@ -3421,7 +3672,6 @@ function Initialize-TaskService {
 
     # Method to save the current list of tasks to the JSON file.
     $saveTasksScript = {
-        # FIX: Changed Context from string to hashtable
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'SaveTasks' } -ScriptBlock {
             Write-Log -Level Trace -Message "Saving $($this._tasks.Count) tasks to $($this._persistencePath)"
             $directory = Split-Path -Path $this._persistencePath -Parent
@@ -3439,7 +3689,6 @@ function Initialize-TaskService {
 
     # Method to load tasks from the JSON file.
     $loadTasksScript = {
-        # FIX: Changed Context from string to hashtable
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'LoadTasks' } -ScriptBlock {
             Write-Log -Level Trace -Message "Attempting to load tasks from $($this._persistencePath)"
             if (Test-Path $this._persistencePath) {
@@ -3490,7 +3739,6 @@ function Initialize-TaskService {
             [Parameter(Mandatory)]
             [string]$TaskId
         )
-        # FIX: Changed Context from string to hashtable, added relevant data
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'GetTaskById'; TaskId = $TaskId } -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($TaskId)) { throw "TaskId cannot be empty." }
 
@@ -3509,7 +3757,6 @@ function Initialize-TaskService {
             [Parameter(Mandatory)]
             [hashtable]$TaskData
         )
-        # FIX: Changed Context from string to hashtable, added relevant data
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'AddTask'; Title = $TaskData.Title } -ScriptBlock {
             if (-not $TaskData.ContainsKey('Title') -or [string]::IsNullOrWhiteSpace($TaskData.Title)) {
                 throw "Task 'Title' is a required property and cannot be empty."
@@ -3546,7 +3793,6 @@ function Initialize-TaskService {
             [Parameter(Mandatory)]
             [hashtable]$Updates
         )
-        # FIX: Changed Context from string to hashtable, added relevant data
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'UpdateTask'; TaskId = $TaskId; UpdatesKeys = $Updates.Keys } -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($TaskId)) { throw 'TaskId cannot be empty.' }
             if ($Updates.Count -eq 0) {
@@ -3590,7 +3836,6 @@ function Initialize-TaskService {
             [Parameter(Mandatory)]
             [string]$TaskId
         )
-        # FIX: Changed Context from string to hashtable, added relevant data
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'DeleteTask'; TaskId = $TaskId } -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($TaskId)) { throw 'TaskId cannot be empty.' }
 
@@ -3635,12 +3880,13 @@ Export-ModuleMember -Function 'Initialize-TaskService'
 #region Basic Components
 function global:New-HeliosLabel {
 param([hashtable]$Props = @{})
-Generated code
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     # Metadata
     Type = "Label"
     IsFocusable = $false
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -3662,10 +3908,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         
         $fg = if ($this.ForegroundColor) { $this.ForegroundColor } else { Get-ThemeColor "Primary" -Default ([ConsoleColor]::White) }
         Write-BufferString -X $this.X -Y $this.Y -Text $this.Text -ForegroundColor $fg
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Label Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -3675,16 +3918,16 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
 }
 
 return $component
-Use code with caution.
 }
 function global:New-HeliosButton {
 param([hashtable]$Props = @{})
-Generated code
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     # Metadata
     Type = "Button"
     IsFocusable = $true
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -3732,10 +3975,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         $textX = $this.X + [Math]::Floor(($this.Width - $this.Text.Length) / 2)
         Write-BufferString -X $textX -Y ($this.Y + 1) -Text $this.Text `
             -ForegroundColor $fgColor -BackgroundColor $bgColor
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Button Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -3746,33 +3986,26 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             if ($this.OnClick) {
                 Invoke-WithErrorHandling -Component "$($this.Name).OnClick" -ScriptBlock {
                     & $this.OnClick
-                } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "Button OnClick error: $($Exception.Message)" -Data $Exception.Context
-                }
+                } -Context @{ Component = $this.Name; Key = $Key }
             }
             Request-TuiRefresh
             return $true
         }
         return $false
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Button HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
-Use code with caution.
 }
 function global:New-HeliosTextBox {
 param([hashtable]$Props = @{})
-Generated code
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     # Metadata
     Type = "TextBox"
     IsFocusable = $true
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -3824,10 +4057,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
             Write-BufferString -X $cursorX -Y ($this.Y + 1) -Text "_" `
                 -BackgroundColor (Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan))
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TextBox Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -3860,7 +4090,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             ([ConsoleKey]::End) { $cursorPos = $text.Length }
             ([ConsoleKey]::V) {
                 # Handle Ctrl+V (paste)
-                if ($Key.Modifiers -band [ConsoleModifiers]::Control) {
+                if ($Key.Modifiers -band [System.ConsoleModifiers]::Control) {
                     try {
                         # Get clipboard text (Windows only)
                         $clipboardText = if (Get-Command Get-Clipboard -ErrorAction SilentlyContinue) {
@@ -3917,32 +4147,25 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             if ($this.OnChange) { 
                 Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
                     & $this.OnChange -NewValue $text
-                } -Context @{ Component = $this.Name; NewValue = $text } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "TextBox OnChange error: $($Exception.Message)" -Data $Exception.Context
-                }
+                } -Context @{ Component = $this.Name; NewValue = $text }
             }
             Request-TuiRefresh
         }
         return $true
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TextBox HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
-Use code with caution.
 }
 function global:New-HeliosCheckBox {
 param([hashtable]$Props = @{})
-Generated code
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     # Metadata
     Type = "CheckBox"
     IsFocusable = $true
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -3975,10 +4198,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         }
         $checkbox = if ($this.Checked) { "[X]" } else { "[ ]" }
         Write-BufferString -X $this.X -Y $this.Y -Text "$checkbox $($this.Text)" -ForegroundColor $fg
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "CheckBox Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -3991,33 +4211,26 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             if ($this.OnChange) { 
                 Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
                     & $this.OnChange -NewValue $this.Checked 
-                } -Context @{ Component = $this.Name; NewValue = $this.Checked } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "CheckBox OnChange error: $($Exception.Message)" -Data $Exception.Context
-                }
+                } -Context @{ Component = $this.Name; NewValue = $this.Checked }
             }
             Request-TuiRefresh
             return $true
         }
         return $false
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "CheckBox HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
-Use code with caution.
 }
 function global:New-HeliosProgressBar {
 param([hashtable]$Props = @{})
-Generated code
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     # Metadata
     Type = "ProgressBar"
     IsFocusable = $false
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -4050,10 +4263,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
             $textX = $this.X + [Math]::Floor(($this.Width - $percentText.Length) / 2)
             Write-BufferString -X $textX -Y $this.Y -Text $percentText -ForegroundColor (Get-ThemeColor "Primary" -Default ([ConsoleColor]::White))
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "ProgressBar Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -4063,16 +4273,16 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
 }
 
 return $component
-Use code with caution.
 }
 function global:New-HeliosTextArea {
 param([hashtable]$Props = @{})
-Generated code
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     # Metadata
     Type = "TextArea"
     IsFocusable = $true
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -4159,10 +4369,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
                 Write-BufferString -X ($this.X + $this.Width - 2) -Y ($this.Y + 1 + $i) -Text $char -ForegroundColor $color
             }
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TextArea Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -4253,7 +4460,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             }
             ([ConsoleKey]::V) {
                 # Handle Ctrl+V (paste)
-                if ($Key.Modifiers -band [ConsoleModifiers]::Control) {
+                if ($Key.Modifiers -band [System.ConsoleModifiers]::Control) {
                     try {
                         # Get clipboard text (Windows only)
                         $clipboardText = if (Get-Command Get-Clipboard -ErrorAction SilentlyContinue) {
@@ -4342,31 +4549,24 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
         if ($this.OnChange) { 
             Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
                 & $this.OnChange -NewValue $this.Text 
-            } -Context @{ Component = $this.Name; NewValue = $this.Text } -ErrorHandler {
-                param($Exception)
-                Write-Log -Level Error -Message "TextArea OnChange error: $($Exception.Message)" -Data $Exception.Context
-            }
+            } -Context @{ Component = $this.Name; NewValue = $this.Text }
         }
         Request-TuiRefresh
         return $true
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TextArea HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
-Use code with caution.
 }
 #endregion
 #region DateTime Components
 function global:New-HeliosCalendarPicker {
 param([hashtable]$Props = @{})
-Generated code
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     Type = "CalendarPicker"
+    Parent = $null
+    LayoutProps = @{}
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
     Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
     Width = if ($null -ne $Props.Width) { $Props.Width } else { 30 }
@@ -4474,10 +4674,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
             Write-BufferString -X ($this.X + 2) -Y $timeY -Text "Time: $timeStr" `
                 -ForegroundColor (Get-ThemeColor "Primary" -Default ([ConsoleColor]::White))
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "CalendarPicker Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -4543,10 +4740,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
                 if ($this.OnSelect) {
                     Invoke-WithErrorHandling -Component "$($this.Name).OnSelect" -ScriptBlock {
                         & $this.OnSelect -Date $date
-                    } -Context @{ Component = $this.Name; SelectedDate = $date } -ErrorHandler {
-                        param($Exception)
-                        Write-Log -Level Error -Message "CalendarPicker OnSelect error: $($Exception.Message)" -Data $Exception.Context
-                    }
+                    } -Context @{ Component = $this.Name; SelectedDate = $date }
                 }
             }
             default {
@@ -4559,34 +4753,27 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             if ($this.OnChange) {
                 Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
                     & $this.OnChange -NewValue $date
-                } -Context @{ Component = $this.Name; NewValue = $date } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "CalendarPicker OnChange error: $($Exception.Message)" -Data $Exception.Context
-                }
+                } -Context @{ Component = $this.Name; NewValue = $date }
             }
             Request-TuiRefresh
         }
         
         return $handled
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "CalendarPicker HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
-Use code with caution.
 }
 function global:New-HeliosTimePicker {
 param([hashtable]$Props = @{})
-Generated code
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     # Metadata
     Type = "TimePicker"
     IsFocusable = $true
     IsFocused = $false
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -4635,10 +4822,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         if ($this.IsFocused -and $this.Width -ge 6) { 
             Write-BufferString -X ($this.X + $this.Width - 4) -Y ($this.Y + 1) -Text "⏰" -ForegroundColor $borderColor 
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TimePicker Render error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 
 # Add HandleInput method
@@ -4670,34 +4854,27 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
             if ($this.OnChange) { 
                 Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
                     & $this.OnChange -NewHour $hour -NewMinute $minute 
-                } -Context @{ Component = $this.Name; NewHour = $hour; NewMinute = $minute } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "TimePicker OnChange error: $($Exception.Message)" -Data $Exception.Context
-                }
+                } -Context @{ Component = $this.Name; NewHour = $hour; NewMinute = $minute }
             }
             Request-TuiRefresh
         }
         return $handled
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TimePicker HandleInput error: $($Exception.Message)" -Data $Exception.Context
-        return $false
-    }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
 
 return $component
-Use code with caution.
 }
 #endregion
 #region Data Display Components
 function global:New-HeliosDataTable {
 param([hashtable]$Props = @{})
-Generated code
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     # Metadata
     Type = "DataTable"
     IsFocusable = if ($null -ne $Props.IsFocusable) { $Props.IsFocusable } else { $true }
+    Parent = $null
+    LayoutProps = @{}
     
     # Properties (from Props)
     X = if ($null -ne $Props.X) { $Props.X } else { 0 }
@@ -4740,6 +4917,7 @@ $component = [PSCustomObject]@{
     ProcessedData = @()
     
     # Event Handlers (from Props)
+    OnAction = $Props.OnAction
     OnRowSelect = $Props.OnRowSelect
     OnSelectionChange = $Props.OnSelectionChange
 }
@@ -4791,10 +4969,7 @@ $processDataScriptBlock = {
         if ($this.CurrentPage -ge $totalPages) {
             $this.CurrentPage = [Math]::Max(0, $totalPages - 1)
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "DataTable ProcessData error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 $component | Add-Member -MemberType ScriptMethod -Name "ProcessData" -Value $processDataScriptBlock
 
@@ -4805,166 +4980,375 @@ $updateDataScriptBlock = {
         $this.Data = @($NewData)
         $this.ProcessData()
         Request-TuiRefresh
-    } -Context @{ Component = $this.Name } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "DataTable UpdateData error: $($Exception.Message)" -Data $Exception.Context
-    }
+    } -Context @{ Component = $this.Name }
 }
 $component | Add-Member -MemberType ScriptMethod -Name "UpdateData" -Value $updateDataScriptBlock
 
-# Render Method
-$renderScriptBlock = {
+# Add Render method
+$component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).Render" -ScriptBlock {
         if (-not $this.Visible) { return }
 
-        $contentX = $this.X; $contentY = $this.Y; $contentWidth = $this.Width; $contentHeight = $this.Height
+        # Initialize layout variables
+        $contentX = $this.X
+        $contentY = $this.Y
+        $contentWidth = $this.Width
+        $contentHeight = $this.Height
+        
+        # Draw border if enabled
         if ($this.ShowBorder) {
-            $borderColor = if ($this.IsFocused) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Border" }
+            $borderColor = if ($this.IsFocused) { 
+                Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+            } else { 
+                Get-ThemeColor "Border" -Default ([ConsoleColor]::DarkGray)
+            }
+            $titleText = if ($this.Title) { " $($this.Title) " } else { " Data Table " }
             Write-BufferBox -X $this.X -Y $this.Y -Width $this.Width -Height $this.Height `
-                -BorderColor $borderColor -Title (' ' + ($this.Title ?? 'Data Table') + ' ')
-            $contentX++; $contentY++; $contentWidth -= 2; $contentHeight -= 2
+                -BorderColor $borderColor -Title $titleText
+            $contentX++
+            $contentY++
+            $contentWidth -= 2
+            $contentHeight -= 2
         }
         
-        $currentY = $contentY; $innerWidth = $contentWidth
+        $currentY = $contentY
+        $innerWidth = $contentWidth
         
+        # Filter row
         if ($this.AllowFilter) {
-            $filterBg = if ($this.FilterMode) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Background" }
-            $filterFg = if ($this.FilterMode) { Get-ThemeColor "Background" } else { Get-ThemeColor "Primary" }
-            $filterDisplayText = if ([string]::IsNullOrEmpty($this.FilterText)) { "Filter: (Ctrl+F to edit)" } else { "Filter: $($this.FilterText)" }
-            Write-BufferString -X $contentX -Y $currentY -Text $filterDisplayText.PadRight($innerWidth) -ForegroundColor $filterFg -BackgroundColor $filterBg
+            $filterBg = if ($this.FilterMode) { 
+                Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+            } else { 
+                Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+            }
+            $filterFg = if ($this.FilterMode) { 
+                Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+            } else { 
+                Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
+            }
+            $filterDisplayText = if ([string]::IsNullOrEmpty($this.FilterText)) { 
+                "Filter: (Ctrl+F to edit)" 
+            } else { 
+                "Filter: $($this.FilterText)" 
+            }
+            Write-BufferString -X $contentX -Y $currentY -Text $filterDisplayText.PadRight($innerWidth) `
+                -ForegroundColor $filterFg -BackgroundColor $filterBg
             $currentY++
         }
         
         # Calculate column widths
         $definedWidth = ($this.Columns | Where-Object Width | Measure-Object -Property Width -Sum).Sum
+        if ($null -eq $definedWidth) { $definedWidth = 0 }
         $flexCols = @($this.Columns | Where-Object { -not $_.Width })
         $rowNumWidth = if ($this.ShowRowNumbers) { 5 } else { 0 }
         $remaining = $innerWidth - $definedWidth - $rowNumWidth - [Math]::Max(0, $this.Columns.Count - 1)
-        $flexWidth = if ($flexCols.Count -gt 0) { [Math]::Floor($remaining / $flexCols.Count) } else { 0 }
-        foreach ($col in $this.Columns) { $col.CalculatedWidth = if ($col.Width) { $col.Width } else { [Math]::Max(5, $flexWidth) } }
+        $flexWidth = if ($flexCols.Count -gt 0) { 
+            [Math]::Floor($remaining / $flexCols.Count) 
+        } else { 
+            0 
+        }
         
+        foreach ($col in $this.Columns) { 
+            $col.CalculatedWidth = if ($col.Width) { 
+                $col.Width 
+            } else { 
+                [Math]::Max(5, $flexWidth) 
+            } 
+        }
+        
+        # Header
         $dataAreaY = $currentY
         if ($this.ShowHeader) {
             $headerX = $contentX
             if ($this.ShowRowNumbers) {
-                Write-BufferString -X $headerX -Y $currentY -Text "#".PadRight(4) -ForegroundColor (Get-ThemeColor "Header"); $headerX += 5
+                Write-BufferString -X $headerX -Y $currentY -Text "#".PadRight(4) `
+                    -ForegroundColor (Get-ThemeColor "Header" -Default ([ConsoleColor]::Cyan))
+                $headerX += 5
             }
             foreach ($col in $this.Columns) {
-                $headerText = $col.Header ?? $col.Name
+                $headerText = if ($col.Header) { $col.Header } else { $col.Name }
                 if ($this.AllowSort -and $col.Sortable -ne $false -and $col.Name -eq $this.SortColumn) {
                     $headerText += if ($this.SortDirection -eq "Ascending") { " ▲" } else { " ▼" }
                 }
-                if ($headerText.Length > $col.CalculatedWidth) { $headerText = $headerText.Substring(0, [Math]::Max(0, $col.CalculatedWidth - 1)) + "…" }
-                Write-BufferString -X $headerX -Y $currentY -Text $headerText.PadRight($col.CalculatedWidth) -ForegroundColor (Get-ThemeColor "Header")
+                if ($headerText.Length -gt $col.CalculatedWidth) { 
+                    $headerText = $headerText.Substring(0, [Math]::Max(0, $col.CalculatedWidth - 1)) + "…" 
+                }
+                Write-BufferString -X $headerX -Y $currentY -Text $headerText.PadRight($col.CalculatedWidth) `
+                    -ForegroundColor (Get-ThemeColor "Header" -Default ([ConsoleColor]::Cyan))
                 $headerX += $col.CalculatedWidth + 1
             }
-            $currentY++; $dataAreaY++
-            Write-BufferString -X $contentX -Y $currentY -Text ("─" * $innerWidth) -ForegroundColor (Get-ThemeColor "Border")
-            $currentY++; $dataAreaY++
+            $currentY++
+            $dataAreaY++
+            Write-BufferString -X $contentX -Y $currentY -Text ("─" * $innerWidth) `
+                -ForegroundColor (Get-ThemeColor "Border" -Default ([ConsoleColor]::DarkGray))
+            $currentY++
+            $dataAreaY++
         }
 
         # Data rows
         $startIdx = $this.CurrentPage * $this.PageSize
         $endIdx = [Math]::Min($startIdx + $this.PageSize - 1, @($this.ProcessedData).Count - 1)
         
+        $footerOffset = if ($this.ShowFooter) { 1 } else { 0 }
+        $dataAreaBottom = $contentY + $contentHeight - $footerOffset
+
         for ($i = $startIdx; $i -le $endIdx; $i++) {
             $row = $this.ProcessedData[$i]
+            if (-not $row) { continue }
+            
             $rowY = $dataAreaY + ($i - $startIdx)
-            if ($rowY >= ($contentY + $contentHeight - (if ($this.ShowFooter) {1} else {0}))) { break }
+            if ($rowY -ge $dataAreaBottom) { break }
+            
             $rowX = $contentX
             $isSelected = ($this.IsFocused -and (($this.MultiSelect -and $this.SelectedRows -contains $i) -or (-not $this.MultiSelect -and $i -eq $this.SelectedRow)))
-            $rowBg = if ($isSelected) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Background" }
-            $rowFg = if ($isSelected) { Get-ThemeColor "Background" } else { Get-ThemeColor "Primary" }
-            if ($isSelected) { Write-BufferString -X $rowX -Y $rowY -Text (" " * $innerWidth) -BackgroundColor $rowBg }
-            if ($this.ShowRowNumbers) { Write-BufferString -X $rowX -Y $rowY -Text ($i + 1).ToString().PadRight(4) -ForegroundColor (Get-ThemeColor "Subtle") -BackgroundColor $rowBg; $rowX += 5 }
+            $rowBg = if ($isSelected) { 
+                Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+            } else { 
+                Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+            }
+            $rowFg = if ($isSelected) { 
+                Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+            } else { 
+                Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
+            }
+            
+            if ($isSelected) { 
+                Write-BufferString -X $rowX -Y $rowY -Text (" " * $innerWidth) -BackgroundColor $rowBg 
+            }
+            
+            if ($this.ShowRowNumbers) { 
+                Write-BufferString -X $rowX -Y $rowY -Text ($i + 1).ToString().PadRight(4) `
+                    -ForegroundColor (Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)) `
+                    -BackgroundColor $rowBg
+                $rowX += 5 
+            }
+            
             foreach ($col in $this.Columns) {
-                $value = $row."$($col.Name)"; $displayValue = if ($col.Format) { & $col.Format $value } else { "$value" }
-                if ($displayValue.Length > $col.CalculatedWidth) { $displayValue = $displayValue.Substring(0, [Math]::Max(0, $col.CalculatedWidth - 1)) + "…" }
-                $cellFg = if ($col.Color -and -not $isSelected) { Get-ThemeColor (& $col.Color $value $row) } else { $rowFg }
-                Write-BufferString -X $rowX -Y $rowY -Text $displayValue.PadRight($col.CalculatedWidth) -ForegroundColor $cellFg -BackgroundColor $rowBg
+                $value = $row."$($col.Name)"
+                $displayValue = if ($col.Format) { 
+                    & $col.Format $value 
+                } else { 
+                    "$value" 
+                }
+                if ($displayValue.Length -gt $col.CalculatedWidth) { 
+                    $displayValue = $displayValue.Substring(0, [Math]::Max(0, $col.CalculatedWidth - 1)) + "…" 
+                }
+                $cellFg = if ($col.Color -and -not $isSelected) { 
+                    Get-ThemeColor (& $col.Color $value $row) -Default $rowFg
+                } else { 
+                    $rowFg 
+                }
+                Write-BufferString -X $rowX -Y $rowY -Text $displayValue.PadRight($col.CalculatedWidth) `
+                    -ForegroundColor $cellFg -BackgroundColor $rowBg
                 $rowX += $col.CalculatedWidth + 1
             }
         }
         
+        # Empty state
         if (@($this.ProcessedData).Count -eq 0) {
-            $emptyMessage = if ($this.FilterText) { "No results match the filter" } else { "No data to display" }
-            Write-BufferString -X ($contentX + [Math]::Floor(($contentWidth - $emptyMessage.Length) / 2)) -Y ($dataAreaY + [Math]::Floor(($contentHeight - $dataAreaY) / 2)) -Text $emptyMessage -ForegroundColor (Get-ThemeColor "Subtle")
+            $emptyMessage = if ($this.FilterText) { 
+                "No results match the filter" 
+            } else { 
+                "No data to display" 
+            }
+            $msgX = $contentX + [Math]::Floor(($contentWidth - $emptyMessage.Length) / 2)
+            $msgY = $dataAreaY + [Math]::Floor(($dataAreaBottom - $dataAreaY) / 2)
+            Write-BufferString -X $msgX -Y $msgY -Text $emptyMessage `
+                -ForegroundColor (Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray))
         }
         
+        # Footer
         if ($this.ShowFooter) {
             $footerY = $contentY + $contentHeight - 1
-            $statusText = "$(@($this.ProcessedData).Count) rows"; if ($this.FilterText) { $statusText += " (filtered)" }
-            if ($this.MultiSelect) { $statusText += " | $(@($this.SelectedRows).Count) selected" }
-            Write-BufferString -X $contentX -Y $footerY -Text $statusText -ForegroundColor (Get-ThemeColor "Subtle")
-            $totalPages = if (@($this.ProcessedData).Count -gt 0) { [Math]::Ceiling(@($this.ProcessedData).Count / $this.PageSize) } else { 1 }
+            $statusText = "$(@($this.ProcessedData).Count) rows"
+            if ($this.FilterText) { 
+                $statusText += " (filtered)" 
+            }
+            if ($this.MultiSelect) { 
+                $statusText += " | $(@($this.SelectedRows).Count) selected" 
+            }
+            Write-BufferString -X $contentX -Y $footerY -Text $statusText `
+                -ForegroundColor (Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray))
+            
+            $totalPages = if (@($this.ProcessedData).Count -gt 0) { 
+                [Math]::Ceiling(@($this.ProcessedData).Count / $this.PageSize) 
+            } else { 
+                1 
+            }
             if ($totalPages -gt 1) {
                 $pageText = "Page $($this.CurrentPage + 1)/$totalPages"
-                Write-BufferString -X ($contentX + $contentWidth - $pageText.Length) -Y $footerY -Text $pageText -ForegroundColor (Get-ThemeColor "Info")
+                Write-BufferString -X ($contentX + $contentWidth - $pageText.Length) -Y $footerY `
+                    -Text $pageText -ForegroundColor (Get-ThemeColor "Info" -Default ([ConsoleColor]::Cyan))
             }
         }
-    } -Context @{ Component = $this.Name } -ErrorHandler { param($Exception) Write-Log -Level Error -Message "DataTable Render error: $($Exception.Message)" -Data $Exception.Context }
+    } -Context @{ Component = $this.Name }
 }
-$component | Add-Member -MemberType ScriptMethod -Name "Render" -Value $renderScriptBlock
 
-# HandleInput Method
-$handleInputScriptBlock = {
+# Add HandleInput method
+$component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
     param($Key)
     Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -ScriptBlock {
+        # Handle filter mode input
         if ($this.FilterMode) {
             switch ($Key.Key) {
-                ([ConsoleKey]::Escape) { $this.FilterMode = $false; Request-TuiRefresh; return $true }
-                ([ConsoleKey]::Enter)  { $this.FilterMode = $false; Request-TuiRefresh; return $true }
+                ([ConsoleKey]::Escape) { 
+                    $this.FilterMode = $false
+                    Request-TuiRefresh
+                    return $true 
+                }
+                ([ConsoleKey]::Enter)  { 
+                    $this.FilterMode = $false
+                    Request-TuiRefresh
+                    return $true 
+                }
                 ([ConsoleKey]::Backspace) {
                     if ($this.FilterText.Length -gt 0) {
-                        $this.FilterText = $this.FilterText.Substring(0, $this.FilterText.Length - 1); $this.ProcessData(); Request-TuiRefresh
+                        $this.FilterText = $this.FilterText.Substring(0, $this.FilterText.Length - 1)
+                        $this.ProcessData()
+                        Request-TuiRefresh
                     }
                     return $true
                 }
                 default {
                     if ($Key.KeyChar -and -not [char]::IsControl($Key.KeyChar)) {
-                        $this.FilterText += $Key.KeyChar; $this.ProcessData(); Request-TuiRefresh; return $true
+                        $this.FilterText += $Key.KeyChar
+                        $this.ProcessData()
+                        Request-TuiRefresh
+                        return $true
                     }
                 }
             }
             return $false
         }
         
-        $totalPages = if (@($this.ProcessedData).Count -gt 0) { [Math]::Ceiling(@($this.ProcessedData).Count / $this.PageSize) } else { 1 }
+        # Calculate pagination info
+        $totalPages = if (@($this.ProcessedData).Count -gt 0) { 
+            [Math]::Ceiling(@($this.ProcessedData).Count / $this.PageSize) 
+        } else { 
+            1 
+        }
+        $selectedItem = if (@($this.ProcessedData).Count -gt 0 -and $this.SelectedRow -ge 0 -and $this.SelectedRow -lt @($this.ProcessedData).Count) { 
+            $this.ProcessedData[$this.SelectedRow] 
+        } else { 
+            $null 
+        }
+
+        # Handle regular input
         switch ($Key.Key) {
             ([ConsoleKey]::UpArrow) {
-                if ($this.SelectedRow > 0) {
-                    $this.SelectedRow--; if ($this.SelectedRow < ($this.CurrentPage * $this.PageSize)) { $this.CurrentPage-- }; Request-TuiRefresh
+                if ($this.SelectedRow -gt 0) {
+                    $this.SelectedRow--
+                    if ($this.SelectedRow -lt ($this.CurrentPage * $this.PageSize)) { 
+                        $this.CurrentPage-- 
+                    }
+                    Request-TuiRefresh
                 }
                 return $true
             }
             ([ConsoleKey]::DownArrow) {
-                if ($this.SelectedRow < (@($this.ProcessedData).Count - 1)) {
-                    $this.SelectedRow++; if ($this.SelectedRow >= (($this.CurrentPage + 1) * $this.PageSize)) { $this.CurrentPage++ }; Request-TuiRefresh
+                if ($this.SelectedRow -lt (@($this.ProcessedData).Count - 1)) {
+                    $this.SelectedRow++
+                    if ($this.SelectedRow -ge (($this.CurrentPage + 1) * $this.PageSize)) { 
+                        $this.CurrentPage++ 
+                    }
+                    Request-TuiRefresh
                 }
                 return $true
             }
-            ([ConsoleKey]::PageUp)   { if ($this.CurrentPage > 0) { $this.CurrentPage--; $this.SelectedRow = $this.CurrentPage * $this.PageSize; Request-TuiRefresh }; return $true }
-            ([ConsoleKey]::PageDown) { if ($this.CurrentPage < ($totalPages - 1)) { $this.CurrentPage++; $this.SelectedRow = $this.CurrentPage * $this.PageSize; Request-TuiRefresh }; return $true }
-            ([ConsoleKey]::Home) { $this.SelectedRow = 0; $this.CurrentPage = 0; Request-TuiRefresh; return $true }
-            ([ConsoleKey]::End) { $this.SelectedRow = @($this.ProcessedData).Count - 1; $this.CurrentPage = [Math]::Max(0, $totalPages - 1); Request-TuiRefresh; return $true }
+            ([ConsoleKey]::PageUp) { 
+                if ($this.CurrentPage -gt 0) { 
+                    $this.CurrentPage--
+                    $this.SelectedRow = $this.CurrentPage * $this.PageSize
+                    Request-TuiRefresh 
+                }
+                return $true 
+            }
+            ([ConsoleKey]::PageDown) { 
+                if ($this.CurrentPage -lt ($totalPages - 1)) { 
+                    $this.CurrentPage++
+                    $this.SelectedRow = $this.CurrentPage * $this.PageSize
+                    Request-TuiRefresh 
+                }
+                return $true 
+            }
+            ([ConsoleKey]::Home) { 
+                $this.SelectedRow = 0
+                $this.CurrentPage = 0
+                Request-TuiRefresh
+                return $true 
+            }
+            ([ConsoleKey]::End) { 
+                $this.SelectedRow = @($this.ProcessedData).Count - 1
+                $this.CurrentPage = [Math]::Max(0, $totalPages - 1)
+                Request-TuiRefresh
+                return $true 
+            }
+            
             ([ConsoleKey]::Enter) {
-                if ($this.OnRowSelect -and @($this.ProcessedData).Count -gt 0) {
-                    Invoke-WithErrorHandling -Component "$($this.Name).OnRowSelect" -ScriptBlock { & $this.OnRowSelect -SelectedData $this.ProcessedData[$this.SelectedRow] -SelectedIndex $this.SelectedRow }
+                if ($this.OnAction -and $selectedItem) {
+                    Invoke-WithErrorHandling -Component "$($this.Name).OnAction" -ScriptBlock {
+                        & $this.OnAction -Action 'select' -Item $selectedItem
+                    } -Context @{ Component = $this.Name; Action = 'select'; Item = $selectedItem }
                 }
                 return $true
             }
-            ([ConsoleKey]::F) { if (($Key.Modifiers -band [ConsoleModifiers]::Control) -and $this.AllowFilter) { $this.FilterMode = $true; Request-TuiRefresh; return $true } }
-            default { if ($Key.KeyChar -match '\d' -and $this.AllowSort) { $colIndex = [int]$Key.KeyChar.ToString()-1; if($colIndex -ge 0 -and $colIndex -lt $this.Columns.Count -and $this.Columns[$colIndex].Sortable -ne $false){ if($this.SortColumn -eq $this.Columns[$colIndex].Name){$this.SortDirection=if($this.SortDirection -eq 'Ascending'){'Descending'}else{'Ascending'}}else{$this.SortColumn=$this.Columns[$colIndex].Name;$this.SortDirection='Ascending'}$this.ProcessData();Request-TuiRefresh;return $true}} }
+            ([ConsoleKey]::E) {
+                if ($this.OnAction -and $selectedItem) {
+                    Invoke-WithErrorHandling -Component "$($this.Name).OnAction" -ScriptBlock {
+                        & $this.OnAction -Action 'select' -Item $selectedItem
+                    } -Context @{ Component = $this.Name; Action = 'select'; Item = $selectedItem }
+                }
+                return $true
+            }
+            ([ConsoleKey]::Delete) {
+                if ($this.OnAction -and $selectedItem) {
+                    Invoke-WithErrorHandling -Component "$($this.Name).OnAction" -ScriptBlock {
+                        & $this.OnAction -Action 'delete' -Item $selectedItem
+                    } -Context @{ Component = $this.Name; Action = 'delete'; Item = $selectedItem }
+                }
+                return $true
+            }
+
+            ([ConsoleKey]::F) { 
+                if (($Key.Modifiers -band [ConsoleModifiers]::Control) -and $this.AllowFilter) { 
+                    $this.FilterMode = $true
+                    Request-TuiRefresh
+                    return $true 
+                } 
+            }
+            default {
+                if ($Key.KeyChar -match '\d' -and $this.AllowSort) {
+                    $colIndex = [int]$Key.KeyChar.ToString() - 1
+                    if ($colIndex -ge 0 -and $colIndex -lt $this.Columns.Count -and ($this.Columns[$colIndex].Sortable -ne $false)) {
+                        $colName = $this.Columns[$colIndex].Name
+                        if ($this.SortColumn -eq $colName) {
+                            # Toggle direction
+                            if ($this.SortDirection -eq 'Ascending') {
+                                $this.SortDirection = 'Descending'
+                            }
+                            else {
+                                $this.SortDirection = 'Ascending'
+                            }
+                        }
+                        else {
+                            # Sort by new column
+                            $this.SortColumn = $colName
+                            $this.SortDirection = 'Ascending'
+                        }
+                        $this.ProcessData()
+                        Request-TuiRefresh
+                        return $true
+                    }
+                }
+            }
         }
         return $false
-    } -Context @{ Component = $this.Name; Key = $Key } -ErrorHandler { param($Exception) Write-Log -Level Error -Message "DataTable HandleInput error: $($Exception.Message)" -Data $Exception.Context; return $false }
+    } -Context @{ Component = $this.Name; Key = $Key }
 }
-$component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value $handleInputScriptBlock
 
 $component.ProcessData()
 return $component
-Use code with caution.
 }
 #endregion
 Export-ModuleMember -Function @(
@@ -5039,10 +5423,7 @@ function New-HeliosBasePanel {
             if (-not $this.Visible) {
                 $Child.Visible = $false
             }
-        } -Context @{ Parent = $this.Name; ChildType = $Child.Type; ChildName = $Child.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel AddChild error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Parent = $this.Name; ChildType = $Child.Type; ChildName = $Child.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name RemoveChild -Value {
@@ -5053,10 +5434,7 @@ function New-HeliosBasePanel {
                 $Child.Parent = $null
             }
             $this.InvalidateLayout()
-        } -Context @{ Parent = $this.Name; ChildType = $Child.Type; ChildName = $Child.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel RemoveChild error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Parent = $this.Name; ChildType = $Child.Type; ChildName = $Child.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name ClearChildren -Value {
@@ -5066,10 +5444,7 @@ function New-HeliosBasePanel {
             }
             $this.Children.Clear()
             $this.InvalidateLayout()
-        } -Context @{ Parent = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel ClearChildren error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Parent = $this.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name Show -Value {
@@ -5080,10 +5455,7 @@ function New-HeliosBasePanel {
                 if ($child.PSObject.Methods['Show']) { $child.Show() } else { $child.Visible = $true }
             }
             $this.InvalidateLayout() # Visibility change affects layout
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel Show error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name Hide -Value {
@@ -5094,10 +5466,7 @@ function New-HeliosBasePanel {
                 if ($child.PSObject.Methods['Hide']) { $child.Hide() } else { $child.Visible = $false }
             }
             $this.InvalidateLayout() # Visibility change affects layout
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel Hide error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name HandleInput -Value {
@@ -5120,11 +5489,7 @@ function New-HeliosBasePanel {
                 Width  = $this.Width - $totalMargin - $totalPadding - $totalBorder
                 Height = $this.Height - $totalMargin - $totalPadding - $totalBorder
             }
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel GetContentBounds error: $($Exception.Message)" -Data $Exception.Context
-            return [PSCustomObject]@{ X = $this.X; Y = $this.Y; Width = $this.Width; Height = $this.Height } # Fallback
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name InvalidateLayout -Value {
@@ -5134,10 +5499,7 @@ function New-HeliosBasePanel {
             if ($this.Parent -and $this.Parent.PSObject.Methods['InvalidateLayout']) {
                 $this.Parent.InvalidateLayout()
             }
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel InvalidateLayout error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     return $panel
@@ -5245,11 +5607,7 @@ function New-HeliosStackPanel {
             $this._cachedLayout = $layout
             $this._isDirty = $false
             return $layout
-        } -Context @{ Panel = $this.Name; Orientation = $this.Orientation } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "StackPanel CalculateLayout error: $($Exception.Message)" -Data $Exception.Context
-            return @{ Children = [System.Collections.ArrayList]@() } # Return empty layout on error
-        }
+        } -Context @{ Panel = $this.Name; Orientation = $this.Orientation }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name Render -Value {
@@ -5270,10 +5628,7 @@ function New-HeliosStackPanel {
             if ($this._isDirty) {
                 [void]$this.CalculateLayout()
             }
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "StackPanel Render error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     return $panel
@@ -5334,11 +5689,7 @@ function New-HeliosGridPanel {
                 }
             }
             return $sizes
-        } -Context @{ Panel = $this.Name; Definitions = $definitions; TotalSize = $totalSize } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "GridPanel _CalculateGridSizes error: $($Exception.Message)" -Data $Exception.Context
-            return @()
-        }
+        } -Context @{ Panel = $this.Name; Definitions = $definitions; TotalSize = $totalSize }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name CalculateLayout -Value {
@@ -5393,11 +5744,7 @@ function New-HeliosGridPanel {
             $this._cachedLayout = $layout
             $this._isDirty = $false
             return $layout
-        } -Context @{ Panel = $this.Name; RowDefs = $this.RowDefinitions; ColDefs = $this.ColumnDefinitions } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "GridPanel CalculateLayout error: $($Exception.Message)" -Data $Exception.Context
-            return @{ Children = [System.Collections.ArrayList]@() }
-        }
+        } -Context @{ Panel = $this.Name; RowDefs = $this.RowDefinitions; ColDefs = $this.ColumnDefinitions }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name Render -Value {
@@ -5428,10 +5775,7 @@ function New-HeliosGridPanel {
                     $y = $bounds.Y + $offset; Write-BufferString -X $bounds.X -Y $y -Text ("─" * $bounds.Width) -ForegroundColor $this.GridLineColor
                 }
             }
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "GridPanel Render error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     return $panel
@@ -5571,6 +5915,7 @@ function Load-PMCTerminalModules {
             # Core utilities first
             @{ Name = "theme-support"; Path = "modules\theme-support.psm1"; Required = $true },
             @{ Name = "focus-manager"; Path = "modules\focus-manager.psm1"; Required = $true },
+            @{ Name = "event-system"; Path = "modules\event-system.psm1"; Required = $true },
             # Core engine next, it provides primitives for components
             @{ Name = "tui-engine"; Path = "modules\tui-engine.psm1"; Required = $true },
             # UI library that depends on the engine and theme
@@ -5646,17 +5991,31 @@ function Register-PMCTerminalScreens {
                 if (-not $Silent) { Write-Host "  Loading $($screenName)..." -ForegroundColor Gray }
                 Import-Module $screenPath -Force -Global
                 
-                $factoryFunctionName = "Get-Helios" + ((($screenName -split "-") | ForEach-Object { $_.Substring(0,1).ToUpper() + $_.Substring(1) }) -join "") + "Screen"
+                # Fix: Strip '-screen' suffix before processing to avoid double 'Screen' in function name
+                $baseScreenName = $screenName -replace '-screen$', ''
+                $factoryFunctionName = "Get-Helios" + (($baseScreenName.Substring(0,1).ToUpper() + $baseScreenName.Substring(1)) + "Screen")
                 
                 if (Get-Command -Name $factoryFunctionName -ErrorAction SilentlyContinue) {
                     $path = "/$($screenName.Replace('-screen',''))"
-                    $Services.Navigation.RegisterRoute($path, { param($svc) & $factoryFunctionName -Services $svc })
+                    
+                    # FIXED: Create a factory scriptblock that embeds the function name directly
+                    # This avoids closure issues entirely by using string substitution
+                    $factoryScriptText = @"
+                        param([PSCustomObject]`$Services)
+                        Invoke-WithErrorHandling -Component "ScreenFactory" -Context @{ Function = "$factoryFunctionName" } -ScriptBlock {
+                            # Call the screen factory function directly by name
+                            return $factoryFunctionName -Services `$Services
+                        }
+"@
+                    $factoryScript = [ScriptBlock]::Create($factoryScriptText)
+                    
+                    $Services.Navigation.RegisterRoute($path, $factoryScript)
                     $registeredScreens += $screenName
                 } else {
-                    Write-Log -Level Warn -Message "Expected screen factory '$factoryFunctionName' not found for module '$screenName'."
+                    Write-Log -Level Warning -Message "Expected screen factory '$factoryFunctionName' not found for module '$screenName'."
                 }
             } else { 
-                Write-Log -Level Warn -Message "Screen module not found: $screenName at $screenPath."
+                Write-Log -Level Warning -Message "Screen module not found: $screenName at $screenPath."
             }
         }
         
@@ -5689,6 +6048,8 @@ function Start-PMCTerminal {
             Load-PMCTerminalModules -Silent:$Silent
             Initialize-TuiEngine
             $global:Services = Initialize-PMCTerminalServices -Silent:$Silent
+            # FIX: Initialize the Focus Manager so it can subscribe to events.
+            Initialize-FocusManager
             Register-PMCTerminalScreens -Services $global:Services -Silent:$Silent
             
             if (-not $Silent) { Write-Host "`nStarting application..." -ForegroundColor Green }

@@ -41,6 +41,7 @@ function Get-HeliosTaskScreen {
     $screen = [PSCustomObject]@{
         Name                  = "HeliosTaskScreen"
         _services             = $null
+        _isInitialized        = $false
         _eventSubscriptions   = [System.Collections.ArrayList]@()
         _rootPanel            = $null
         _listPanel            = $null
@@ -213,7 +214,8 @@ function Get-HeliosTaskScreen {
                 $taskToEdit = $this._dataTable.SelectedItem
             }
             if (-not $taskToEdit) {
-                Write-Log -Level Warn -Message "Edit action triggered, but no task is selected."
+                # FIX: Use 'Warning' instead of 'Warn'
+                Write-Log -Level Warning -Message "Edit action triggered, but no task is selected."
                 # Optionally show an alert dialog here
                 return
             }
@@ -232,7 +234,8 @@ function Get-HeliosTaskScreen {
                 $taskToDelete = $this._dataTable.SelectedItem
             }
             if (-not $taskToDelete) {
-                Write-Log -Level Warn -Message "Delete action triggered, but no task is selected."
+                # FIX: Use 'Warning' instead of 'Warn'
+                Write-Log -Level Warning -Message "Delete action triggered, but no task is selected."
                 return
             }
 
@@ -317,7 +320,8 @@ function Get-HeliosTaskScreen {
                     Unregister-Event -SubscriptionId $sub.Id
                 }
                 catch {
-                    Write-Log -Level Warn -Message "Failed to unregister event subscription $($sub.Id): $_"
+                    # FIX: Use 'Warning' instead of 'Warn'
+                    Write-Log -Level Warning -Message "Failed to unregister event subscription $($sub.Id): $_"
                 }
             }
             $this._eventSubscriptions.Clear()
@@ -328,7 +332,7 @@ function Get-HeliosTaskScreen {
     $handleInputScript = {
         param(
             [Parameter(Mandatory = $true)]
-            [System.Management.Automation.Host.KeyInfo]$Key
+            [System.ConsoleKeyInfo]$Key
         )
 
         # Input is only handled at the screen level if the list panel is visible.
@@ -351,7 +355,7 @@ function Get-HeliosTaskScreen {
     # The Render method for a screen is simple: it just renders its root panel.
     # The TUI engine will then recursively render the children of the root panel.
     $renderScript = {
-        if ($this._rootPanel -and $this._rootPanel.PSObject.Methods['Render']) {
+        if ($this._rootPanel -and ($this._rootPanel.PSObject.ScriptMethods.Name -contains 'Render')) {
             $this._rootPanel.Render()
         }
     }

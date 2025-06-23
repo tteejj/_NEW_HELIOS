@@ -25,6 +25,7 @@ function Load-PMCTerminalModules {
             # Core utilities first
             @{ Name = "theme-support"; Path = "modules\theme-support.psm1"; Required = $true },
             @{ Name = "focus-manager"; Path = "modules\focus-manager.psm1"; Required = $true },
+            @{ Name = "event-system"; Path = "modules\event-system.psm1"; Required = $true },
             # Core engine next, it provides primitives for components
             @{ Name = "tui-engine"; Path = "modules\tui-engine.psm1"; Required = $true },
             # UI library that depends on the engine and theme
@@ -100,17 +101,31 @@ function Register-PMCTerminalScreens {
                 if (-not $Silent) { Write-Host "  Loading $($screenName)..." -ForegroundColor Gray }
                 Import-Module $screenPath -Force -Global
                 
-                $factoryFunctionName = "Get-Helios" + ((($screenName -split "-") | ForEach-Object { $_.Substring(0,1).ToUpper() + $_.Substring(1) }) -join "") + "Screen"
+                # Fix: Strip '-screen' suffix before processing to avoid double 'Screen' in function name
+                $baseScreenName = $screenName -replace '-screen$', ''
+                $factoryFunctionName = "Get-Helios" + (($baseScreenName.Substring(0,1).ToUpper() + $baseScreenName.Substring(1)) + "Screen")
                 
                 if (Get-Command -Name $factoryFunctionName -ErrorAction SilentlyContinue) {
                     $path = "/$($screenName.Replace('-screen',''))"
-                    $Services.Navigation.RegisterRoute($path, { param($svc) & $factoryFunctionName -Services $svc })
+                    
+                    # FIXED: Create a factory scriptblock that embeds the function name directly
+                    # This avoids closure issues entirely by using string substitution
+                    $factoryScriptText = @"
+                        param([PSCustomObject]`$Services)
+                        Invoke-WithErrorHandling -Component "ScreenFactory" -Context @{ Function = "$factoryFunctionName" } -ScriptBlock {
+                            # Call the screen factory function directly by name
+                            return $factoryFunctionName -Services `$Services
+                        }
+"@
+                    $factoryScript = [ScriptBlock]::Create($factoryScriptText)
+                    
+                    $Services.Navigation.RegisterRoute($path, $factoryScript)
                     $registeredScreens += $screenName
                 } else {
-                    Write-Log -Level Warn -Message "Expected screen factory '$factoryFunctionName' not found for module '$screenName'."
+                    Write-Log -Level Warning -Message "Expected screen factory '$factoryFunctionName' not found for module '$screenName'."
                 }
             } else { 
-                Write-Log -Level Warn -Message "Screen module not found: $screenName at $screenPath."
+                Write-Log -Level Warning -Message "Screen module not found: $screenName at $screenPath."
             }
         }
         
@@ -143,6 +158,8 @@ function Start-PMCTerminal {
             Load-PMCTerminalModules -Silent:$Silent
             Initialize-TuiEngine
             $global:Services = Initialize-PMCTerminalServices -Silent:$Silent
+            # FIX: Initialize the Focus Manager so it can subscribe to events.
+            Initialize-FocusManager
             Register-PMCTerminalScreens -Services $global:Services -Silent:$Silent
             
             if (-not $Silent) { Write-Host "`nStarting application..." -ForegroundColor Green }

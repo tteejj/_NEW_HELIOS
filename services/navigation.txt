@@ -1,4 +1,3 @@
-####\services\navigation.psm1
 # FILE: services/navigation.psm1
 # PURPOSE: Provides a centralized service for managing screen navigation and routing.
 # This service encapsulates all logic related to moving between different views in the application.
@@ -38,7 +37,7 @@ function Initialize-NavigationService {
             [Parameter(Mandatory)]
             [string]$Path,
             [Parameter(Mandatory)]
-            [hashtable]$Services
+            [PSCustomObject]$Services
         )
 
         Invoke-WithErrorHandling -Component "$($this.Name).GoTo" -Context @{ Path = $Path } -ScriptBlock {
@@ -55,7 +54,11 @@ function Initialize-NavigationService {
 
             Write-Log -Level Info -Message "Navigating to path: $Path"
             $factory = $this._routes[$lookupPath]
+            
+            # FIXED: Call the factory scriptblock directly with the dot operator
+            # This preserves the closure context for $using: variables
             $screen = & $factory $Services
+            
             if ($null -eq $screen) {
                 throw "The screen factory for path '$Path' did not return a valid screen object."
             }

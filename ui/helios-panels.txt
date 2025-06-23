@@ -56,10 +56,7 @@ function New-HeliosBasePanel {
             if (-not $this.Visible) {
                 $Child.Visible = $false
             }
-        } -Context @{ Parent = $this.Name; ChildType = $Child.Type; ChildName = $Child.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel AddChild error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Parent = $this.Name; ChildType = $Child.Type; ChildName = $Child.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name RemoveChild -Value {
@@ -70,10 +67,7 @@ function New-HeliosBasePanel {
                 $Child.Parent = $null
             }
             $this.InvalidateLayout()
-        } -Context @{ Parent = $this.Name; ChildType = $Child.Type; ChildName = $Child.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel RemoveChild error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Parent = $this.Name; ChildType = $Child.Type; ChildName = $Child.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name ClearChildren -Value {
@@ -83,10 +77,7 @@ function New-HeliosBasePanel {
             }
             $this.Children.Clear()
             $this.InvalidateLayout()
-        } -Context @{ Parent = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel ClearChildren error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Parent = $this.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name Show -Value {
@@ -97,10 +88,7 @@ function New-HeliosBasePanel {
                 if ($child.PSObject.Methods['Show']) { $child.Show() } else { $child.Visible = $true }
             }
             $this.InvalidateLayout() # Visibility change affects layout
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel Show error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name Hide -Value {
@@ -111,10 +99,7 @@ function New-HeliosBasePanel {
                 if ($child.PSObject.Methods['Hide']) { $child.Hide() } else { $child.Visible = $false }
             }
             $this.InvalidateLayout() # Visibility change affects layout
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel Hide error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name HandleInput -Value {
@@ -137,11 +122,7 @@ function New-HeliosBasePanel {
                 Width  = $this.Width - $totalMargin - $totalPadding - $totalBorder
                 Height = $this.Height - $totalMargin - $totalPadding - $totalBorder
             }
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel GetContentBounds error: $($Exception.Message)" -Data $Exception.Context
-            return [PSCustomObject]@{ X = $this.X; Y = $this.Y; Width = $this.Width; Height = $this.Height } # Fallback
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name InvalidateLayout -Value {
@@ -151,10 +132,7 @@ function New-HeliosBasePanel {
             if ($this.Parent -and $this.Parent.PSObject.Methods['InvalidateLayout']) {
                 $this.Parent.InvalidateLayout()
             }
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "Panel InvalidateLayout error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     return $panel
@@ -262,11 +240,7 @@ function New-HeliosStackPanel {
             $this._cachedLayout = $layout
             $this._isDirty = $false
             return $layout
-        } -Context @{ Panel = $this.Name; Orientation = $this.Orientation } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "StackPanel CalculateLayout error: $($Exception.Message)" -Data $Exception.Context
-            return @{ Children = [System.Collections.ArrayList]@() } # Return empty layout on error
-        }
+        } -Context @{ Panel = $this.Name; Orientation = $this.Orientation }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name Render -Value {
@@ -287,10 +261,7 @@ function New-HeliosStackPanel {
             if ($this._isDirty) {
                 [void]$this.CalculateLayout()
             }
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "StackPanel Render error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     return $panel
@@ -351,11 +322,7 @@ function New-HeliosGridPanel {
                 }
             }
             return $sizes
-        } -Context @{ Panel = $this.Name; Definitions = $definitions; TotalSize = $totalSize } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "GridPanel _CalculateGridSizes error: $($Exception.Message)" -Data $Exception.Context
-            return @()
-        }
+        } -Context @{ Panel = $this.Name; Definitions = $definitions; TotalSize = $totalSize }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name CalculateLayout -Value {
@@ -410,11 +377,7 @@ function New-HeliosGridPanel {
             $this._cachedLayout = $layout
             $this._isDirty = $false
             return $layout
-        } -Context @{ Panel = $this.Name; RowDefs = $this.RowDefinitions; ColDefs = $this.ColumnDefinitions } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "GridPanel CalculateLayout error: $($Exception.Message)" -Data $Exception.Context
-            return @{ Children = [System.Collections.ArrayList]@() }
-        }
+        } -Context @{ Panel = $this.Name; RowDefs = $this.RowDefinitions; ColDefs = $this.ColumnDefinitions }
     }
 
     $panel | Add-Member -MemberType ScriptMethod -Name Render -Value {
@@ -445,10 +408,7 @@ function New-HeliosGridPanel {
                     $y = $bounds.Y + $offset; Write-BufferString -X $bounds.X -Y $y -Text ("─" * $bounds.Width) -ForegroundColor $this.GridLineColor
                 }
             }
-        } -Context @{ Panel = $this.Name } -ErrorHandler {
-            param($Exception)
-            Write-Log -Level Error -Message "GridPanel Render error: $($Exception.Message)" -Data $Exception.Context
-        }
+        } -Context @{ Panel = $this.Name }
     }
 
     return $panel
