@@ -1,0 +1,264 @@
+#
+# services/task-service.psm1
+#
+# Purpose:
+#   Manages the state and business logic for all tasks in the application.
+#   This service is responsible for creating, reading, updating, and deleting tasks.
+#   It also handles its own data persistence to a JSON file and announces
+#   state changes using the native PowerShell eventing engine.
+#
+
+# Using a generic List for more efficient Add/Remove operations internally.
+using namespace System.Collections.Generic
+
+# Disable event registration errors on module reload in interactive sessions.
+$ErrorActionPreference = 'SilentlyContinue'
+Unregister-Event -SourceIdentifier 'TaskService'
+$ErrorActionPreference = 'Stop'
+
+
+# Register the event source that this service will use to broadcast changes.
+# Screens can subscribe to this to know when to refresh their data.
+Register-EngineEvent -SourceIdentifier 'TaskService' -SupportEvent
+
+
+function Initialize-TaskService {
+    <#
+    .SYNOPSIS
+        Creates and initializes a new Task Service instance.
+    .DESCRIPTION
+        This function constructs the Task Service object, complete with its internal state
+        and methods for managing tasks. It loads existing tasks from disk upon creation.
+    .OUTPUTS
+        [PSCustomObject] The fully initialized Task Service object.
+    #>
+    [CmdletBinding()]
+    param()
+
+    Write-Log -Level Trace -Message 'Initializing Task Service...'
+
+    $service = [PSCustomObject]@{
+        _tasks           = [List[hashtable]]::new()
+        _persistencePath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'PMCTerminal' 'tasks.json'
+    }
+
+    #================================================================================
+    # Private Methods
+    #================================================================================
+
+    # Method to broadcast that the task list has changed.
+    $announceChangeScript = {
+        # FIX: Changed Context from string to hashtable
+        Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'AnnounceChange' } -ScriptBlock {
+            Write-Log -Level Trace -Message "Broadcasting 'Tasks.Changed' event from SourceIdentifier 'TaskService'."
+            New-Event -SourceIdentifier 'TaskService' -EventIdentifier 'Tasks.Changed'
+        }
+    }
+    $service | Add-Member -MemberType ScriptMethod -Name '_AnnounceChange' -Value $announceChangeScript -Force
+
+    # Method to save the current list of tasks to the JSON file.
+    $saveTasksScript = {
+        # FIX: Changed Context from string to hashtable
+        Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'SaveTasks' } -ScriptBlock {
+            Write-Log -Level Trace -Message "Saving $($this._tasks.Count) tasks to $($this._persistencePath)"
+            $directory = Split-Path -Path $this._persistencePath -Parent
+            if (-not (Test-Path $directory)) {
+                New-Item -ItemType Directory -Path $directory -Force | Out-Null
+            }
+
+            # Convert the generic List to a standard array for robust serialization.
+            $jsonContent = @($this._tasks) | ConvertTo-Json -Depth 10 -Compress
+            Set-Content -Path $this._persistencePath -Value $jsonContent -Encoding UTF8
+            Write-Log -Level Info -Message "Successfully saved tasks."
+        }
+    }
+    $service | Add-Member -MemberType ScriptMethod -Name '_SaveTasks' -Value $saveTasksScript -Force
+
+    # Method to load tasks from the JSON file.
+    $loadTasksScript = {
+        # FIX: Changed Context from string to hashtable
+        Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'LoadTasks' } -ScriptBlock {
+            Write-Log -Level Trace -Message "Attempting to load tasks from $($this._persistencePath)"
+            if (Test-Path $this._persistencePath) {
+                $jsonContent = Get-Content -Path $this._persistencePath -Raw -ErrorAction SilentlyContinue
+                if (-not [string]::IsNullOrWhiteSpace($jsonContent)) {
+                    try {
+                        $loadedTasks = $jsonContent | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+                        # Ensure the loaded data is an array (or can be treated as one).
+                        if ($loadedTasks -is [array]) {
+                            $this._tasks.Clear()
+                            $this._tasks.AddRange($loadedTasks)
+                            Write-Log -Level Info -Message "Successfully loaded $($this._tasks.Count) tasks."
+                        }
+                        else {
+                            Write-Log -Level Warning -Message 'tasks.json does not contain a valid JSON array. Starting with an empty task list.'
+                            $this._tasks.Clear()
+                        }
+                    }
+                    catch {
+                        Write-Log -Level Error -Message 'Failed to parse tasks.json. File might be corrupt. Starting with an empty task list.' -Data @{ Exception = $_ }
+                        $this._tasks.Clear()
+                    }
+                }
+                else {
+                    Write-Log -Level Info -Message 'tasks.json is empty. Initializing empty task list.'
+                    $this._tasks.Clear()
+                }
+            }
+            else {
+                Write-Log -Level Info -Message 'tasks.json not found. Initializing with an empty task list.'
+            }
+        }
+    }
+    $service | Add-Member -MemberType ScriptMethod -Name '_LoadTasks' -Value $loadTasksScript -Force
+
+    #================================================================================
+    # Public Methods
+    #================================================================================
+
+    $getTasksScript = {
+        # Return a copy of the array so the internal state cannot be modified directly.
+        return @($this._tasks)
+    }
+    $service | Add-Member -MemberType ScriptMethod -Name 'GetTasks' -Value $getTasksScript -Force
+
+    $getTaskByIdScript = {
+        param(
+            [Parameter(Mandatory)]
+            [string]$TaskId
+        )
+        # FIX: Changed Context from string to hashtable, added relevant data
+        Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'GetTaskById'; TaskId = $TaskId } -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($TaskId)) { throw "TaskId cannot be empty." }
+
+            $task = $this._tasks.Where({ $_.id -eq $TaskId }, 'First')
+            # Return a clone of the hashtable to prevent direct modification of the state object.
+            if ($task) {
+                return $task.Clone()
+            }
+            return $null
+        }
+    }
+    $service | Add-Member -MemberType ScriptMethod -Name 'GetTaskById' -Value $getTaskByIdScript -Force
+
+    $addTaskScript = {
+        param(
+            [Parameter(Mandatory)]
+            [hashtable]$TaskData
+        )
+        # FIX: Changed Context from string to hashtable, added relevant data
+        Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'AddTask'; Title = $TaskData.Title } -ScriptBlock {
+            if (-not $TaskData.ContainsKey('Title') -or [string]::IsNullOrWhiteSpace($TaskData.Title)) {
+                throw "Task 'Title' is a required property and cannot be empty."
+            }
+
+            Write-Log -Level Info -Message "Creating new task with title: $($TaskData.Title)"
+
+            $newTask = @{
+                id          = [Guid]::NewGuid().ToString()
+                title       = $TaskData.Title.Trim()
+                description = if ($TaskData.ContainsKey('Description')) { $TaskData.Description } else { '' }
+                completed   = $false
+                priority    = if ($TaskData.ContainsKey('Priority')) { $TaskData.Priority } else { 'medium' }
+                project     = if ($TaskData.ContainsKey('Category')) { $TaskData.Category } else { 'General' }
+                due_date    = if ($TaskData.ContainsKey('DueDate')) { $TaskData.DueDate } else { $null }
+                created_at  = (Get-Date).ToString('o')
+                updated_at  = (Get-Date).ToString('o')
+            }
+
+            $this._tasks.Add($newTask)
+            $this._SaveTasks()
+            $this._AnnounceChange()
+
+            Write-Log -Level Info -Message "Task created successfully with ID: $($newTask.id)"
+            return $newTask
+        }
+    }
+    $service | Add-Member -MemberType ScriptMethod -Name 'AddTask' -Value $addTaskScript -Force
+
+    $updateTaskScript = {
+        param(
+            [Parameter(Mandatory)]
+            [string]$TaskId,
+            [Parameter(Mandatory)]
+            [hashtable]$Updates
+        )
+        # FIX: Changed Context from string to hashtable, added relevant data
+        Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'UpdateTask'; TaskId = $TaskId; UpdatesKeys = $Updates.Keys } -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($TaskId)) { throw 'TaskId cannot be empty.' }
+            if ($Updates.Count -eq 0) {
+                Write-Log -Level Warning -Message "UpdateTask called with no updates for TaskId $TaskId"
+                return $null
+            }
+
+            $taskToUpdate = $this._tasks.Where({ $_.id -eq $TaskId }, 'First')
+            if (-not $taskToUpdate) {
+                Write-Log -Level Warning -Message "UpdateTask failed: Task with ID '$TaskId' not found."
+                return $null
+            }
+
+            Write-Log -Level Info -Message "Updating task with ID: $TaskId"
+
+            # Dynamically apply updates from the hashtable
+            foreach ($key in $Updates.Keys) {
+                $value = $Updates[$key]
+                switch ($key) {
+                    'Title'       { $taskToUpdate.title = $value.Trim() }
+                    'Description' { $taskToUpdate.description = $value }
+                    'Priority'    { $taskToUpdate.priority = $value }
+                    'Category'    { $taskToUpdate.project = $value } # Map 'Category' to internal 'project' field
+                    'DueDate'     { $taskToUpdate.due_date = $value }
+                    'Completed'   { $taskToUpdate.completed = [bool]$value }
+                }
+            }
+            $taskToUpdate.updated_at = (Get-Date).ToString('o')
+
+            $this._SaveTasks()
+            $this._AnnounceChange()
+
+            Write-Log -Level Info -Message "Task '$TaskId' updated successfully."
+            return $taskToUpdate
+        }
+    }
+    $service | Add-Member -MemberType ScriptMethod -Name 'UpdateTask' -Value $updateTaskScript -Force
+
+    $deleteTaskScript = {
+        param(
+            [Parameter(Mandatory)]
+            [string]$TaskId
+        )
+        # FIX: Changed Context from string to hashtable, added relevant data
+        Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'DeleteTask'; TaskId = $TaskId } -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($TaskId)) { throw 'TaskId cannot be empty.' }
+
+            $taskToRemove = $this._tasks.Where({ $_.id -eq $TaskId }, 'First')
+            if ($taskToRemove) {
+                Write-Log -Level Info -Message "Deleting task with ID: $TaskId"
+                $wasRemoved = $this._tasks.Remove($taskToRemove)
+
+                if ($wasRemoved) {
+                    $this._SaveTasks()
+                    $this._AnnounceChange()
+                    Write-Log -Level Info -Message "Task '$TaskId' deleted successfully."
+                    return $true
+                }
+                # This case is rare but indicates an internal issue.
+                Write-Log -Level Error -Message "Found task '$TaskId' but failed to remove it from the list."
+                return $false
+            }
+
+            Write-Log -Level Warning -Message "DeleteTask failed: Task with ID '$TaskId' not found."
+            return $false
+        }
+    }
+    $service | Add-Member -MemberType ScriptMethod -Name 'DeleteTask' -Value $deleteTaskScript -Force
+
+
+    # Load initial data from disk
+    $service._LoadTasks()
+
+    Write-Log -Level Info -Message "Task Service initialized with $($service.GetTasks().Count) tasks."
+    return $service
+}
+
+Export-ModuleMember -Function 'Initialize-TaskService'
