@@ -14,8 +14,9 @@
 #     or moving the focus.
 #
 
-using module "$PSScriptRoot/logger.psm1"
-using module "$PSScriptRoot/exceptions.psm1"
+#DONT USE.->MAIN
+#using module './logger.psm1'
+#using module './exceptions.psm1'
 
 #region Private State
 # ------------------------------------------------------------------------------
@@ -56,12 +57,12 @@ function Find-FocusableComponents {
         if (-not $current) { continue }
 
         # A component is focusable if it's visible and has the IsFocusable property set to true.
-        if ($current.PSObject.Properties['IsFocusable'] -and $current.IsFocusable -and $current.PSObject.Properties['Visible'] -and $current.Visible) {
+        if (($current.PSObject.Properties.Name -contains 'IsFocusable') -and $current.IsFocusable -and ($current.PSObject.Properties.Name -contains 'Visible') -and $current.Visible) {
             $focusable.Add($current)
         }
 
         # Recurse into children. The Helios layout system uses a 'Children' property.
-        if ($current.PSObject.Properties['Children']) {
+        if (($current.PSObject.Properties.Name -contains 'Children') -and $current.Children) {
             foreach ($child in $current.Children) {
                 $queue.Enqueue($child)
             }
@@ -85,12 +86,12 @@ function Update-TabOrderAndFocus {
         Request-Focus -Component $null -Reason 'ScreenChange'
 
         if (-not $Screen.RootPanel) {
-            Write-Log -Level Warn -Message "Screen '$($Screen.Name)' has no RootPanel. Cannot establish focus."
+            Write-Log -Level Warning -Message "Screen '$($Screen.Name)' has no RootPanel. Cannot establish focus."
             return
         }
 
         # Find all focusable components and establish the new tab order
-        $focusableComponents = Find-FocusableComponents -RootComponent $Screen.RootPanel
+        $focusableComponents = @(Find-FocusableComponents -RootComponent $Screen.RootPanel)
         $FocusManager.TabOrder.AddRange($focusableComponents)
 
         Write-Log -Level Debug -Message "Found $($FocusManager.TabOrder.Count) focusable components on screen '$($Screen.Name)'"
@@ -137,13 +138,14 @@ function Initialize-FocusManager {
         # Create the handler scriptblock. It receives the event and updates the tab order.
         $handler = {
             param($Event)
-            Invoke-WithErrorHandling -Component 'FocusManager.ScreenPushedHandler' -Context @{ EventData = $Event.MessageData } -ScriptBlock {
-                $screen = $Event.MessageData.Screen
-                if ($screen) {
+            Invoke-WithErrorHandling -Component 'FocusManager.ScreenPushedHandler' -Context @{ EventSourceArgsCount = $Event.SourceArgs.Count } -ScriptBlock {
+                # FIX: Get the screen object from the first event argument.
+                if ($Event.SourceArgs.Count -gt 0) {
+                    $screen = $Event.SourceArgs[0]
                     Update-TabOrderAndFocus -Screen $screen
                 }
                 else {
-                    Write-Log -Level Warn -Message 'Screen.Pushed event received without a screen object.'
+                    Write-Log -Level Warning -Message 'Screen.Pushed event received with no event arguments.'
                 }
             }
         }
@@ -179,7 +181,7 @@ function Request-Focus {
 
     Invoke-WithErrorHandling -Component 'FocusManager.RequestFocus' -Context @{ TargetComponent = $Component.Name; Reason = $Reason } -ScriptBlock {
         # Defensively check if the target component is actually focusable.
-        if ($Component -and $Component.PSObject.Properties['IsFocusable'] -and -not $Component.IsFocusable) {
+        if ($Component -and ($Component.PSObject.Properties.Name -contains 'IsFocusable') -and -not $Component.IsFocusable) {
             Write-Log -Level Debug -Message "Request-Focus ignored for non-focusable component '$($Component.Name)'"
             return
         }
@@ -194,7 +196,7 @@ function Request-Focus {
         # 1. Blur the previously focused component
         if ($oldFocused) {
             $oldFocused.IsFocused = $false
-            if ($oldFocused.PSObject.ScriptMethods['OnBlur']) {
+            if (($oldFocused.PSObject.ScriptMethods.Name -contains 'OnBlur')) {
                 try {
                     $oldFocused.OnBlur()
                     Write-Log -Level Trace -Message "Called OnBlur for component '$($oldFocused.Name)'"
@@ -212,7 +214,7 @@ function Request-Focus {
         # 3. Focus the new component
         if ($Component) {
             $Component.IsFocused = $true
-            if ($Component.PSObject.ScriptMethods['OnFocus']) {
+            if (($Component.PSObject.ScriptMethods.Name -contains 'OnFocus')) {
                 try {
                     $Component.OnFocus()
                     Write-Log -Level Trace -Message "Called OnFocus for component '$($Component.Name)'"

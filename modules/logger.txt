@@ -1,3 +1,4 @@
+####\modules\logger.psm1
 #
 # MODULE: logger.psm1
 # PURPOSE: Provides a robust, granular logging system for the PMC Terminal application.

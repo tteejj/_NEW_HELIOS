@@ -19,11 +19,11 @@
 #     - `Handle-DialogInput()`: To pass keyboard input for processing.
 #
 
-using module "$PSScriptRoot/logger.psm1"
-using module "$PSScriptRoot/exceptions.psm1"
-using module "$PSScriptRoot/../ui/helios-components.psm1"
-using module "$PSScriptRoot/../ui/helios-panels.psm1"
-using module "$PSScriptRoot/focus-manager.psm1" # For Get-FocusedComponent, Request-Focus
+#DONT USE -> MAIN DOES IT
+#using module './exceptions.psm1'
+#using module '../ui/helios-components.psm1'
+#using module '../ui/helios-panels.psm1'
+#using module './focus-manager.psm1' # For Get-FocusedComponent, Request-Focus
 
 #region Private State
 # ------------------------------------------------------------------------------
@@ -65,11 +65,11 @@ function Find-DialogFocusableComponents {
         $current = $queue.Dequeue()
         if (-not $current) { continue }
 
-        if ($current.PSObject.Properties['IsFocusable'] -and $current.IsFocusable -and $current.PSObject.Properties['Visible'] -and $current.Visible) {
+        if (($current.PSObject.Properties.Name -contains 'IsFocusable') -and $current.IsFocusable -and ($current.PSObject.Properties.Name -contains 'Visible') -and $current.Visible) {
             $focusable.Add($current)
         }
 
-        if ($current.PSObject.Properties['Children']) {
+        if (($current.PSObject.Properties.Name -contains 'Children') -and $current.Children) {
             foreach ($child in $current.Children) {
                 $queue.Enqueue($child)
             }
@@ -103,7 +103,7 @@ function Show-ActiveDialog {
 
         # Build the tab order for the new dialog.
         $DialogSystem.DialogTabOrder.Clear()
-        $focusableComponents = Find-DialogFocusableComponents -RootComponent $DialogPanel
+        $focusableComponents = @(Find-DialogFocusableComponents -RootComponent $DialogPanel)
         $DialogSystem.DialogTabOrder.AddRange($focusableComponents)
         Write-Log -Level Trace -Message "Dialog has $($DialogSystem.DialogTabOrder.Count) focusable components."
 
@@ -339,7 +339,8 @@ function Handle-DialogInput {
     [OutputType([bool])]
     param(
         [Parameter(Mandatory = $true)]
-        [System.Management.Automation.Host.KeyInfo]$Key
+        # FIX: Standardize on System.ConsoleKeyInfo
+        [System.ConsoleKeyInfo]$Key
     )
 
     if (-not $DialogSystem.CurrentDialog) {
@@ -364,7 +365,7 @@ function Handle-DialogInput {
 
         # Dispatch input to the currently focused component within the dialog
         $focusedComponent = Get-FocusedComponent
-        if ($focusedComponent -and $focusedComponent.PSObject.ScriptMethods['HandleInput']) {
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'HandleInput')) {
             # If the component's HandleInput returns $true, it handled the key.
             if ($focusedComponent.HandleInput($Key)) {
                 return

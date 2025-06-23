@@ -1,3 +1,4 @@
+####\modules\theme-support.psm1
 #
 # MODULE: theme-support.psm1
 # PURPOSE: Provides minimal theme support for the PMC Terminal application

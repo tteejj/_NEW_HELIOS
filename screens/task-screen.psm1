@@ -8,11 +8,11 @@
 #   It interacts directly with the TaskService to manage state and subscribes to
 #   service events to automatically refresh its display.
 #
-
-using module "$PSScriptRoot/../modules/logger.psm1"
-using module "$PSScriptRoot/../modules/exceptions.psm1"
-using module "$PSScriptRoot/../ui/helios-components.psm1"
-using module "$PSScriptRoot/../ui/helios-panels.psm1"
+#DONT USE.->MAIN
+#using module '../modules/logger.psm1'
+#using module '../modules/exceptions.psm1'
+#using module '../ui/helios-components.psm1'
+#using module '../ui/helios-panels.psm1'
 # NOTE: The 'New-HeliosDataTable' component is assumed to exist in the component library
 # with the following API:
 # - Props: Columns (array), Data (array), OnAction (scriptblock)
@@ -41,6 +41,7 @@ function Get-HeliosTaskScreen {
     $screen = [PSCustomObject]@{
         Name                  = "HeliosTaskScreen"
         _services             = $null
+        _isInitialized        = $false
         _eventSubscriptions   = [System.Collections.ArrayList]@()
         _rootPanel            = $null
         _listPanel            = $null
@@ -213,7 +214,8 @@ function Get-HeliosTaskScreen {
                 $taskToEdit = $this._dataTable.SelectedItem
             }
             if (-not $taskToEdit) {
-                Write-Log -Level Warn -Message "Edit action triggered, but no task is selected."
+                # FIX: Use 'Warning' instead of 'Warn'
+                Write-Log -Level Warning -Message "Edit action triggered, but no task is selected."
                 # Optionally show an alert dialog here
                 return
             }
@@ -232,7 +234,8 @@ function Get-HeliosTaskScreen {
                 $taskToDelete = $this._dataTable.SelectedItem
             }
             if (-not $taskToDelete) {
-                Write-Log -Level Warn -Message "Delete action triggered, but no task is selected."
+                # FIX: Use 'Warning' instead of 'Warn'
+                Write-Log -Level Warning -Message "Delete action triggered, but no task is selected."
                 return
             }
 
@@ -278,14 +281,14 @@ function Get-HeliosTaskScreen {
     $initScript = {
         param(
             [Parameter(Mandatory = $true)]
-            [hashtable]$services
+            [PSCustomObject]$services
         )
         Invoke-WithErrorHandling -Component "$($this.Name).Init" -Context @{} -ScriptBlock {
             Write-Log -Level Info -Message "Initializing Task Screen."
             # Defensive programming: ensure required services are provided
             if (-not $services) { throw "Services hashtable cannot be null." }
             if (-not $services.Task) { throw "TaskService is missing from services." }
-            if (-not $services.Keybinding) { throw "KeybindingService is missing from services." }
+            if (-not $services.Keybindings) { throw "KeybindingService is missing from services." }
 
             $this._services = $services
 
@@ -317,7 +320,8 @@ function Get-HeliosTaskScreen {
                     Unregister-Event -SubscriptionId $sub.Id
                 }
                 catch {
-                    Write-Log -Level Warn -Message "Failed to unregister event subscription $($sub.Id): $_"
+                    # FIX: Use 'Warning' instead of 'Warn'
+                    Write-Log -Level Warning -Message "Failed to unregister event subscription $($sub.Id): $_"
                 }
             }
             $this._eventSubscriptions.Clear()
@@ -328,7 +332,7 @@ function Get-HeliosTaskScreen {
     $handleInputScript = {
         param(
             [Parameter(Mandatory = $true)]
-            [System.Management.Automation.Host.KeyInfo]$Key
+            [System.ConsoleKeyInfo]$Key
         )
 
         # Input is only handled at the screen level if the list panel is visible.
@@ -338,7 +342,7 @@ function Get-HeliosTaskScreen {
         }
 
         Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -Context @{ Key = $Key.Key } -ScriptBlock {
-            $keybindingSvc = $this._services.Keybinding
+            $keybindingSvc = $this._services.Keybindings
             if ($keybindingSvc.IsAction('list.new', $Key))    { $this._NewTask(); return $true }
             if ($keybindingSvc.IsAction('list.edit', $Key))   { $this._EditTask($null); return $true }
             if ($keybindingSvc.IsAction('list.delete', $Key)) { $this._DeleteTask($null); return $true }
@@ -351,7 +355,7 @@ function Get-HeliosTaskScreen {
     # The Render method for a screen is simple: it just renders its root panel.
     # The TUI engine will then recursively render the children of the root panel.
     $renderScript = {
-        if ($this._rootPanel -and $this._rootPanel.PSObject.Methods['Render']) {
+        if ($this._rootPanel -and ($this._rootPanel.PSObject.ScriptMethods.Name -contains 'Render')) {
             $this._rootPanel.Render()
         }
     }

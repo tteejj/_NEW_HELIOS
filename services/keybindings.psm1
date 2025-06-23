@@ -1,3 +1,4 @@
+####\services\keybindings.psm1
 # FILE: services/keybindings.psm1
 # PURPOSE: Provides a centralized service for managing application keybindings.
 # This service abstracts raw key presses into named actions, allowing for easy
@@ -11,7 +12,6 @@ function Initialize-KeybindingService {
     Write-Log -Level Debug -Message "Initializing KeybindingService..."
 
     # The _keyMap defines all application-wide actions and their corresponding keys.
-    # Action names are lowercase for case-insensitive lookups.
     # 'Key' can be a character or a [System.ConsoleKey] enum.
     # 'Modifiers' is an array containing 'Ctrl', 'Alt', or 'Shift'.
     $keyMap = @{

@@ -3,8 +3,8 @@
 # Provides screen management, input processing, and frame rendering with recursive component tree traversal
 
 #region Module Dependencies
-Import-Module "$PSScriptRoot\logger.psm1" -Force
-Import-Module "$PSScriptRoot\exceptions.psm1" -Force
+#Import-Module "$PSScriptRoot\logger.psm1" -Force
+#Import-Module "$PSScriptRoot\exceptions.psm1" -Force
 # NOTE: event-system removed - using PowerShell native eventing
 
 #endregion
@@ -89,7 +89,7 @@ function Initialize-TuiEngine {
         $ErrorActionPreference = 'SilentlyContinue'
         Unregister-Event -SourceIdentifier 'TuiEngine.System' -ErrorAction SilentlyContinue
         $ErrorActionPreference = 'Stop'
-        Register-EngineEvent -SourceIdentifier 'TuiEngine.System' -SupportEvent
+        # Note: We don't need Register-EngineEvent here since New-Event will create the source automatically
         
         # Announce initialization
         New-Event -SourceIdentifier 'TuiEngine.System' -EventArguments @{ 
@@ -99,18 +99,6 @@ function Initialize-TuiEngine {
         }
 
         Write-Log -Level Info -Message "TUI Engine initialized successfully"
-
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "TUI Engine initialization failed" -Data $Exception
-        throw [Helios.ServiceInitializationException]::new( # FIX: Specify full type for custom exception
-            "Failed to initialize TUI Engine",
-            @{
-                OriginalException = $Exception.OriginalError # FIX: Access OriginalError from HeliosException
-                Context = $Exception.Context
-            },
-            $Exception # FIX: Pass original exception as inner
-        )
     }
 }
 
@@ -174,11 +162,6 @@ function Initialize-InputThread {
         $global:TuiState.InputAsyncResult = $ps.BeginInvoke()
 
         Write-Log -Level Debug -Message "Input thread initialized"
-
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Failed to initialize input thread" -Data $Exception
-        throw # Re-throw as a HeliosException already wrapped by Invoke-WithErrorHandling
     }
 }
 
@@ -187,90 +170,80 @@ function Initialize-InputThread {
 #region Main Loop
 
 function Start-TuiLoop {
-    param([PSCustomObject]$InitialScreen = $null)
+    param()
 
-    Invoke-WithErrorHandling -Component "TuiEngine.MainLoop" -Context @{ InitialScreen = $InitialScreen?.Name } -ScriptBlock {
-        # Initialize if not already done
-        if (-not $global:TuiState.BufferWidth -or $global:TuiState.BufferWidth -eq 0) {
-            Initialize-TuiEngine
-        }
+    try {
+        Invoke-WithErrorHandling -Component "TuiEngine.MainLoop" -Context @{} -ScriptBlock {
+            # Initialize if not already done
+            if (-not $global:TuiState.BufferWidth -or $global:TuiState.BufferWidth -eq 0) {
+                Initialize-TuiEngine
+            }
 
-        if ($InitialScreen) {
-            Push-Screen -Screen $InitialScreen
-        }
+            # Validate we have a screen to display
+            if (-not $global:TuiState.CurrentScreen -and $global:TuiState.ScreenStack.Count -eq 0) {
+                throw "No screen available to display. Use Navigation.GoTo() before starting the loop."
+            }
 
-        # Validate we have a screen to display
-        if (-not $global:TuiState.CurrentScreen -and $global:TuiState.ScreenStack.Count -eq 0) {
-            throw "No screen available to display"
-        }
+            $global:TuiState.Running = $true
+            $frameTime = New-Object System.Diagnostics.Stopwatch
+            $targetFrameTime = 1000.0 / $global:TuiState.RenderStats.TargetFPS
 
-        $global:TuiState.Running = $true
-        $frameTime = New-Object System.Diagnostics.Stopwatch
-        $targetFrameTime = 1000.0 / $global:TuiState.RenderStats.TargetFPS
+            Write-Log -Level Info -Message "Starting TUI main loop"
 
-        Write-Log -Level Info -Message "Starting TUI main loop"
+            while ($global:TuiState.Running) {
+                try {
+                    $frameTime.Restart()
 
-        while ($global:TuiState.Running) {
-            try {
-                $frameTime.Restart()
+                    # Process input
+                    $hadInput = Process-TuiInput
 
-                # Process input
-                $hadInput = Process-TuiInput
+                    # Render frame if needed
+                    if ($global:TuiState.IsDirty -or $hadInput) {
+                        Render-Frame
+                        $global:TuiState.IsDirty = $false
+                    }
 
-                # Update dialog system if available
-                # NOTE: Update-DialogSystem is not defined in any provided module.
-                # If this is intended functionality, it would need to be added
-                # to the dialog-system.psm1 module. Commenting out for now to prevent CommandNotFound errors.
-                # if (Get-Command -Name "Update-DialogSystem" -ErrorAction SilentlyContinue) {
-                #     try { Update-DialogSystem } catch { Write-Log -Level Warning -Message "Dialog update error: $_" }
-                # }
+                    # Frame timing
+                    $elapsed = $frameTime.ElapsedMilliseconds
+                    if ($elapsed -lt $targetFrameTime) {
+                        $sleepTime = [Math]::Max(1, $targetFrameTime - $elapsed)
+                        Start-Sleep -Milliseconds $sleepTime
+                    }
 
-                # Render frame if needed
-                if ($global:TuiState.IsDirty -or $hadInput) {
-                    Render-Frame
-                    $global:TuiState.IsDirty = $false
+                } catch [Helios.HeliosException] {
+                    # Handle recoverable errors
+                    $exception = $_.Exception
+                    Write-Log -Level Error -Message "TUI Exception occurred: $($exception.Message)" -Data $exception.DetailedContext
+                    
+                    if (Get-Command -Name "Show-AlertDialog" -ErrorAction SilentlyContinue) {
+                        Show-AlertDialog -Title "Application Error" -Message "An operation failed: $($exception.Message)"
+                    }
+                    
+                    $global:TuiState.IsDirty = $true
+
+                } catch {
+                    # Handle fatal errors (standard PowerShell errors not wrapped by Invoke-WithErrorHandling)
+                    Write-Log -Level Error -Message "Fatal TUI error: $($_.Exception.Message)" -Data $_
+                    
+                    if (Get-Command -Name "Show-AlertDialog" -ErrorAction SilentlyContinue) {
+                        Show-AlertDialog -Title "Fatal Error" -Message "A critical error occurred. The application will now close."
+                    }
+                    
+                    $global:TuiState.Running = $false
                 }
-
-                # Frame timing
-                $elapsed = $frameTime.ElapsedMilliseconds
-                if ($elapsed -lt $targetFrameTime) {
-                    $sleepTime = [Math]::Max(1, $targetFrameTime - $elapsed)
-                    Start-Sleep -Milliseconds $sleepTime
-                }
-
-            } catch [Helios.HeliosException] { # FIX: Use full exception type
-                # Handle recoverable errors
-                $exception = $_.Exception
-                Write-Log -Level Error -Message "TUI Exception occurred: $($exception.Message)" -Data $exception.DetailedContext # FIX: Access DetailedContext
-                
-                if (Get-Command -Name "Show-AlertDialog" -ErrorAction SilentlyContinue) {
-                    Show-AlertDialog -Title "Application Error" -Message "An operation failed: $($exception.Message)"
-                }
-                
-                $global:TuiState.IsDirty = $true
-
-            } catch {
-                # Handle fatal errors (standard PowerShell errors not wrapped by Invoke-WithErrorHandling)
-                Write-Log -Level Error -Message "Fatal TUI error: $($_.Exception.Message)" -Data $_ # Data includes ErrorRecord
-                
-                if (Get-Command -Name "Show-AlertDialog" -ErrorAction SilentlyContinue) {
-                    Show-AlertDialog -Title "Fatal Error" -Message "A critical error occurred. The application will now close."
-                }
-                
-                $global:TuiState.Running = $false
             }
         }
-
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Main loop error" -Data $Exception
-        throw # Re-throw as a HeliosException already wrapped by Invoke-WithErrorHandling
-    } -Finally {
+    }
+    catch {
+        # Catch fatal errors from Invoke-WithErrorHandling itself during loop setup
+        Write-Log -Level Error -Message "Main loop fatal error" -Data $_.Exception
+        throw
+    }
+    finally {
         Cleanup-TuiEngine
     }
 }
 
-# FIX: Corrected and singular Process-TuiInput function
 function Process-TuiInput {
     if (-not $global:TuiState.InputQueue) { return $false }
 
@@ -281,8 +254,7 @@ function Process-TuiInput {
 
         if ($global:TuiState.InputQueue -is [System.Collections.Concurrent.ConcurrentQueue[System.ConsoleKeyInfo]]) {
             $keyInfo = [System.ConsoleKeyInfo]::new([char]0, [System.ConsoleKey]::None, $false, $false, $false)
-            # FIX: Removed [ref] keyword for TryDequeue - pass variable directly for 'out' parameter
-            while ($global:TuiState.InputQueue.TryDequeue($keyInfo)) {
+            while ($global:TuiState.InputQueue.TryDequeue([ref]$keyInfo)) {
                 $processedAny = $true
                 $global:TuiState.LastActivity = [DateTime]::Now
                 Process-SingleKeyInput -keyInfo $keyInfo
@@ -300,11 +272,6 @@ function Process-TuiInput {
                 }
             }
         }
-
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Error processing input" -Data $Exception
-        Request-TuiRefresh
     }
 
     return $processedAny
@@ -316,7 +283,13 @@ function Process-SingleKeyInput {
     Invoke-WithErrorHandling -Component "TuiEngine.ProcessSingleKey" -Context @{ Key = $keyInfo.Key; Operation = "ProcessSingleKeyInput" } -ScriptBlock {
         # Handle Tab navigation
         if ($keyInfo.Key -eq [ConsoleKey]::Tab) {
-            Handle-TabNavigation -Reverse ($keyInfo.Modifiers -band [ConsoleModifiers]::Shift)
+            if (Get-Command Move-Focus -ErrorAction SilentlyContinue) {
+                $moveFocusParams = @{}
+                if ($keyInfo.Modifiers -band [ConsoleModifiers]::Shift) {
+                    $moveFocusParams.Reverse = $true
+                }
+                Move-Focus @moveFocusParams
+            }
             return
         }
 
@@ -327,19 +300,18 @@ function Process-SingleKeyInput {
         }
 
         # Focused component gets next chance
-        # Ensure HandleInput exists as a ScriptMethod (or other callable member type)
-        if ($global:TuiState.FocusedComponent -and $global:TuiState.FocusedComponent.PSObject.ScriptMethods['HandleInput']) {
-            if ($global:TuiState.FocusedComponent.HandleInput($keyInfo)) { # Direct call, no & needed for ScriptMethod
+        $focusedComponent = if (Get-Command Get-FocusedComponent -ErrorAction SilentlyContinue) { Get-FocusedComponent } else { $null }
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'HandleInput')) {
+            if ($focusedComponent.HandleInput($keyInfo)) {
                 return
             }
         }
 
         # Finally, the screen handles input
-        # Ensure HandleInput exists as a ScriptMethod (or other callable member type)
-        if ($global:TuiState.CurrentScreen -and $global:TuiState.CurrentScreen.PSObject.ScriptMethods['HandleInput']) {
-            $result = $global:TuiState.CurrentScreen.HandleInput($keyInfo) # Direct call, no & needed for ScriptMethod
+        if ($global:TuiState.CurrentScreen -and ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'HandleInput')) {
+            $result = $global:TuiState.CurrentScreen.HandleInput($keyInfo)
             switch ($result) {
-                "Back" { Pop-Screen }
+                "Back" { if(Get-Command Pop-Screen -ErrorAction SilentlyContinue) { Pop-Screen } }
                 "Quit" { 
                     $global:TuiState.Running = $false
                     if ($global:TuiState.CancellationTokenSource) {
@@ -348,10 +320,6 @@ function Process-SingleKeyInput {
                 }
             }
         }
-
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Warning -Message "Input processing error" -Data $Exception
     }
 }
 
@@ -363,114 +331,65 @@ function Render-Frame {
     Invoke-WithErrorHandling -Component "TuiEngine.RenderFrame" -Context @{ Operation = "RenderFrame" } -ScriptBlock {
         Write-Log -Level Verbose -Message "Starting recursive frame render"
 
-        # Get background color
         $bgColor = if (Get-Command -Name "Get-ThemeColor" -ErrorAction SilentlyContinue) {
-            Get-ThemeColor "Background"
+            Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
         } else {
             [ConsoleColor]::Black
         }
 
-        # Clear the back buffer
         Clear-BackBuffer -BackgroundColor $bgColor
 
-        # 1. Render screen chrome (header, footer, etc.)
-        if ($global:TuiState.CurrentScreen -and $global:TuiState.CurrentScreen.PSObject.ScriptMethods['Render']) {
-            $global:TuiState.CurrentScreen.Render() # Direct call, no & needed for ScriptMethod
-        }
-
-        # 2. COLLECT all visible components recursively
         $renderQueue = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-        # Define the recursive collection function
         $collectComponents = {
             param($component)
             
-            if (-not $component -or $component.Visible -eq $false) { return }
-
-            # Add component to render queue
+            if (-not $component -or -not $component.Visible) { return }
             $renderQueue.Add($component)
 
-            Write-Log -Level Debug -Message "Collected component: Type=$($component.Type), Name=$($component.Name), Pos=($($component.X),$($component.Y)), ZIndex=$($component.ZIndex), Children=$($component.Children.Count)"
-
-            # Check if this is a panel and needs layout calculation
-            # Ensure CalculateLayout exists as a ScriptMethod (or other callable member type)
-            if ($component.PSObject.ScriptMethods['CalculateLayout']) {
+            if (($component.PSObject.ScriptMethods.Name -contains 'CalculateLayout')) {
                 try {
-                    Write-Log -Level Debug -Message "Calculating layout for panel: $($component.Name)"
-                    [void]($component.CalculateLayout()) # Direct call, no & needed for ScriptMethod
+                    $component.CalculateLayout()
                 } catch {
                     Write-Log -Level Error -Message "Layout calculation failed for '$($component.Name)'" -Data $_
                 }
             }
 
-            # Recursively collect children
-            if ($component.Children -and $component.Children.Count -gt 0) {
+            if (($component.PSObject.Properties.Name -contains 'Children') -and $component.Children) {
                 foreach ($child in $component.Children) {
                     & $collectComponents $child
                 }
             }
         }
 
-        # Start collection from screen's children
-        if ($global:TuiState.CurrentScreen -and $global:TuiState.CurrentScreen.Children) {
-            Write-Log -Level Debug -Message "Starting collection from screen children: Count=$($global:TuiState.CurrentScreen.Children.Count)"
-            foreach ($child in $global:TuiState.CurrentScreen.Children) {
-                & $collectComponents $child
-            }
+        if ($global:TuiState.CurrentScreen) {
+            & $collectComponents $global:TuiState.CurrentScreen.RootPanel
         }
 
-        # Also collect from any active dialogs
-        # FIX: Changed Get-CurrentDialog to Get-ActiveDialog, as exported by dialog-system.psm1
         if (Get-Command -Name "Get-ActiveDialog" -ErrorAction SilentlyContinue) {
             $currentDialog = Get-ActiveDialog
             if ($currentDialog) {
-                Write-Log -Level Debug -Message "Collecting dialog components"
                 & $collectComponents $currentDialog
             }
         }
 
-        # 3. SORT components by ZIndex
         $sortedComponents = $renderQueue | Sort-Object -Property @{
             Expression = { if ($null -ne $_.ZIndex) { $_.ZIndex } else { 0 } }
         }
 
-        Write-Log -Level Debug -Message "Rendering $($sortedComponents.Count) components sorted by ZIndex"
-
-        # 4. RENDER each component
         foreach ($component in $sortedComponents) {
-            # Ensure Render exists as a ScriptMethod (or other callable member type)
-            if ($component.PSObject.ScriptMethods['Render']) {
+            if (($component.PSObject.ScriptMethods.Name -contains 'Render')) {
                 Invoke-WithErrorHandling -Component "$($component.Name ?? $component.Type).Render" -Context @{ 
-                    Operation = "RenderComponent";
                     ComponentType = $component.Type;
                     ComponentName = $component.Name
                 } -ScriptBlock {
-                    $component.Render() # Direct call, no & needed for ScriptMethod
-                } -ErrorHandler {
-                    param($Exception)
-                    Write-Log -Level Error -Message "Component render error" -Data $Exception
-                    throw [Helios.ComponentRenderException]::new( # FIX: Specify full type for custom exception
-                        "Failed to render component '$($Exception.Context.ComponentName ?? $Exception.Context.ComponentType)'",
-                        @{
-                            FailingComponent = $component
-                            OriginalException = $Exception.OriginalError # FIX: Access OriginalError from HeliosException
-                        },
-                        $Exception # FIX: Pass original exception as inner
-                    )
+                    $component.Render()
                 }
             }
         }
 
-        # 5. Swap buffers and display
         Render-BufferOptimized
-
-        # Position cursor out of the way
         [Console]::SetCursorPosition($global:TuiState.BufferWidth - 1, $global:TuiState.BufferHeight - 1)
-
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Fatal frame render error" -Data $Exception
-        throw # Re-throw as a HeliosException already wrapped by Invoke-WithErrorHandling
     }
 }
 
@@ -483,61 +402,57 @@ function Render-BufferOptimized {
     $forceFullRender = $global:TuiState.RenderStats.FrameCount -eq 0
     
     Invoke-WithErrorHandling -Component "TuiEngine.RenderBuffer" -Context @{ Operation = "RenderBufferOptimized" } -ScriptBlock {
-        # Build ANSI output with change detection
         for ($y = 0; $y -lt $global:TuiState.BufferHeight; $y++) {
-            $outputBuilder.Append("$([char]27)[$($y + 1);1H") | Out-Null
+            $lineChanged = $false
+            $lineBuilder = New-Object System.Text.StringBuilder
             
             for ($x = 0; $x -lt $global:TuiState.BufferWidth; $x++) {
                 $backCell = $global:TuiState.BackBuffer[$y, $x]
                 $frontCell = $global:TuiState.FrontBuffer[$y, $x]
                 
-                # Skip unchanged cells unless forcing full render
-                if (-not $forceFullRender -and
-                    $backCell.Char -eq $frontCell.Char -and 
-                    $backCell.FG -eq $frontCell.FG -and 
-                    $backCell.BG -eq $frontCell.BG) {
-                    continue
+                if ($forceFullRender -or
+                    $backCell.Char -ne $frontCell.Char -or 
+                    $backCell.FG -ne $frontCell.FG -or 
+                    $backCell.BG -ne $frontCell.BG) {
+                    
+                    if (-not $lineChanged) {
+                        $lineBuilder.Append("$([char]27)[$($y + 1);1H") | Out-Null
+                        $lineChanged = $true
+                    }
+                    
+                    if ($backCell.FG -ne $lastFG -or $backCell.BG -ne $lastBG) {
+                        $fgCode = Get-AnsiColorCode $backCell.FG
+                        $bgCode = Get-AnsiColorCode $backCell.BG -IsBackground $true
+                        $lineBuilder.Append("$([char]27)[${fgCode};${bgCode}m") | Out-Null
+                        $lastFG = $backCell.FG
+                        $lastBG = $backCell.BG
+                    }
+                    
+                    $lineBuilder.Append($backCell.Char) | Out-Null
+                    
+                    $global:TuiState.FrontBuffer[$y, $x] = $backCell.Clone()
+                } else {
+                    if ($lineChanged) {
+                        $outputBuilder.Append($lineBuilder.ToString()) | Out-Null
+                        $lineBuilder.Clear()
+                        $lineChanged = $false
+                    }
+                    $lastFG = -1
+                    $lastBG = -1
                 }
-                
-                # Position cursor if we skipped cells
-                if ($x -gt 0 -and $outputBuilder.Length -gt 0) {
-                    $outputBuilder.Append("$([char]27)[$($y + 1);$($x + 1)H") | Out-Null
-                }
-                
-                # Update colors if changed
-                if ($backCell.FG -ne $lastFG -or $backCell.BG -ne $lastBG) {
-                    $fgCode = Get-AnsiColorCode $backCell.FG
-                    $bgCode = Get-AnsiColorCode $backCell.BG -IsBackground $true
-                    $outputBuilder.Append("$([char]27)[${fgCode};${bgCode}m") | Out-Null
-                    $lastFG = $backCell.FG
-                    $lastBG = $backCell.BG
-                }
-                
-                $outputBuilder.Append($backCell.Char) | Out-Null
-                
-                # Update front buffer
-                $global:TuiState.FrontBuffer[$y, $x] = @{
-                    Char = $backCell.Char
-                    FG = $backCell.FG
-                    BG = $backCell.BG
-                }
+            }
+            if ($lineChanged) {
+                $outputBuilder.Append($lineBuilder.ToString()) | Out-Null
             }
         }
         
-        # Reset ANSI formatting
         $outputBuilder.Append("$([char]27)[0m") | Out-Null
         
-        # Write to console
-        if ($outputBuilder.Length -gt 0) {
+        if ($outputBuilder.Length -gt 4) { # more than just reset code
             [Console]::Write($outputBuilder.ToString())
         }
-        
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Warning -Message "Render buffer error" -Data $Exception
     }
     
-    # Update stats
     $stopwatch.Stop()
     $global:TuiState.RenderStats.LastFrameTime = $stopwatch.ElapsedMilliseconds
     $global:TuiState.RenderStats.FrameCount++
@@ -549,61 +464,44 @@ function Render-BufferOptimized {
 #region Screen Management
 
 function Push-Screen {
-    param([PSCustomObject]$Screen)
+    param(
+        [PSCustomObject]$Screen,
+        [PSCustomObject]$Services
+    )
     
     if (-not $Screen) { return }
     
-    Invoke-WithErrorHandling -Component "TuiEngine.PushScreen" -Context @{ Operation = "PushScreen"; ScreenName = $Screen.Name } -ScriptBlock {
+    Invoke-WithErrorHandling -Component "TuiEngine.PushScreen" -Context @{ ScreenName = $Screen.Name } -ScriptBlock {
         Write-Log -Level Debug -Message "Pushing screen: $($Screen.Name)"
         
-        # Handle focus cleanup
-        # Ensure OnBlur exists as a ScriptMethod (or other callable member type)
-        if ($global:TuiState.FocusedComponent -and $global:TuiState.FocusedComponent.PSObject.ScriptMethods['OnBlur']) {
-            $global:TuiState.FocusedComponent.OnBlur() # Direct call, no & needed for ScriptMethod
+        $focusedComponent = if (Get-Command Get-FocusedComponent -ErrorAction SilentlyContinue) { Get-FocusedComponent } else { $null }
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'OnBlur')) {
+            $focusedComponent.OnBlur()
         }
         
-        # Exit current screen
         if ($global:TuiState.CurrentScreen) {
-            # Ensure OnExit exists as a ScriptMethod (or other callable member type)
-            if ($global:TuiState.CurrentScreen.PSObject.ScriptMethods['OnExit']) {
-                $global:TuiState.CurrentScreen.OnExit() # Direct call, no & needed for ScriptMethod
+            if ($global:TuiState.CurrentScreen -and ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'OnExit')) {
+                $global:TuiState.CurrentScreen.OnExit()
             }
             $global:TuiState.ScreenStack.Push($global:TuiState.CurrentScreen)
         }
         
-        # Set new screen
         $global:TuiState.CurrentScreen = $Screen
-        $global:TuiState.FocusedComponent = $null
         
-        # Initialize new screen
-        # Ensure Init exists as a ScriptMethod (or other callable member type)
-        if ($Screen.PSObject.ScriptMethods['Init']) {
-            if ($Screen._services) {
-                $Screen.Init -services $Screen._services # Direct call, no & needed for ScriptMethod
-            } else {
-                $Screen.Init() # Direct call, no & needed for ScriptMethod
-            }
+        if (($Screen.PSObject.ScriptMethods.Name -contains 'Init') -and -not $Screen._isInitialized) {
+            if (-not $Services) { throw "Services object must be provided to initialize a screen."}
+            $Screen.Init($Services)
+            $Screen._isInitialized = $true
+        }
+        
+        if (($Screen.PSObject.ScriptMethods.Name -contains 'OnEnter')) {
+            $Screen.OnEnter()
         }
         
         Request-TuiRefresh
         
-        # Publish event (using native PowerShell eventing)
-        New-Event -SourceIdentifier 'TuiEngine.System' -EventArguments @{ 
-            EventType = 'ScreenPushed'
-            ScreenName = $Screen.Name 
-        }
-        
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Error -Message "Failed to push screen" -Data $Exception
-        throw [Helios.ServiceInitializationException]::new( # FIX: Specify full type for custom exception
-            "Failed to initialize screen '$($Exception.Context.ScreenName)'",
-            @{
-                FailingScreen = $Screen
-                OriginalException = $Exception.OriginalError # FIX: Access OriginalError from HeliosException
-            },
-            $Exception # FIX: Pass original exception as inner
-        )
+        # FIX: Use -EventArguments for robust data passing.
+        New-Event -SourceIdentifier 'PMC.Navigation.ScreenPushed' -EventArguments @($Screen) -ErrorAction SilentlyContinue
     }
 }
 
@@ -613,49 +511,29 @@ function Pop-Screen {
     Invoke-WithErrorHandling -Component "TuiEngine.PopScreen" -Context @{ Operation = "PopScreen" } -ScriptBlock {
         Write-Log -Level Debug -Message "Popping screen"
         
-        # Handle focus cleanup
-        # Ensure OnBlur exists as a ScriptMethod (or other callable member type)
-        if ($global:TuiState.FocusedComponent -and $global:TuiState.FocusedComponent.PSObject.ScriptMethods['OnBlur']) {
-            $global:TuiState.FocusedComponent.OnBlur() # Direct call, no & needed for ScriptMethod
+        $focusedComponent = if (Get-Command Get-FocusedComponent -ErrorAction SilentlyContinue) { Get-FocusedComponent } else { $null }
+        if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'OnBlur')) {
+            $focusedComponent.OnBlur()
         }
         
-        # Store screen to exit
         $screenToExit = $global:TuiState.CurrentScreen
         
-        # Pop new screen from stack
         $global:TuiState.CurrentScreen = $global:TuiState.ScreenStack.Pop()
-        $global:TuiState.FocusedComponent = $null
         
-        # Call lifecycle hooks
-        # Ensure OnExit exists as a ScriptMethod (or other callable member type)
-        if ($screenToExit -and $screenToExit.PSObject.ScriptMethods['OnExit']) {
-            $screenToExit.OnExit() # Direct call, no & needed for ScriptMethod
+        if ($screenToExit -and ($screenToExit.PSObject.ScriptMethods.Name -contains 'OnExit')) {
+            $screenToExit.OnExit()
         }
         
-        # Ensure OnResume exists as a ScriptMethod (or other callable member type)
-        if ($global:TuiState.CurrentScreen -and $global:TuiState.CurrentScreen.PSObject.ScriptMethods['OnResume']) {
-            $global:TuiState.CurrentScreen.OnResume() # Direct call, no & needed for ScriptMethod
-        }
-        
-        # Restore focus if tracked (Note: Set-ComponentFocus is internal to TuiEngine)
-        if ($global:TuiState.CurrentScreen.LastFocusedComponent) {
-            Set-ComponentFocus -Component $global:TuiState.CurrentScreen.LastFocusedComponent
+        if ($global:TuiState.CurrentScreen -and ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'OnResume')) {
+            $global:TuiState.CurrentScreen.OnResume()
         }
         
         Request-TuiRefresh
         
-        # Publish event (using native PowerShell eventing)
-        New-Event -SourceIdentifier 'TuiEngine.System' -EventArguments @{ 
-            EventType = 'ScreenPopped'
-            ScreenName = $global:TuiState.CurrentScreen.Name 
-        }
+        # FIX: Use -EventArguments for robust data passing.
+        New-Event -SourceIdentifier 'PMC.Navigation.ScreenPopped' -EventArguments @($global:TuiState.CurrentScreen) -ErrorAction SilentlyContinue
         
         return $true
-        
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Warning -Message "Pop screen error" -Data $Exception
-        return $false
     }
 }
 
@@ -666,7 +544,6 @@ function Pop-Screen {
 function Clear-BackBuffer {
     param([ConsoleColor]$BackgroundColor = [ConsoleColor]::Black)
     
-    # Clear entire back buffer
     for ($y = 0; $y -lt $global:TuiState.BufferHeight; $y++) {
         for ($x = 0; $x -lt $global:TuiState.BufferWidth; $x++) {
             $global:TuiState.BackBuffer[$y, $x] = @{ 
@@ -702,22 +579,7 @@ function Write-BufferString {
             }
         }
         
-        # Handle wide characters
-        # Check if the character is considered wide (e.g., East Asian width)
-        # This regex broadly covers CJK Unified Ideographs, Hangul Syllables, etc.
-        if ($char -match '[\u1100-\u11FF\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF]') {
-            $currentX += 2
-            if ($currentX -lt $global:TuiState.BufferWidth -and $currentX -gt 0) {
-                # Ensure the space for wide characters is also filled with the background color
-                $global:TuiState.BackBuffer[$Y, $currentX - 1] = @{ 
-                    Char = ' '
-                    FG = $ForegroundColor # Use the same FG/BG for the blank space
-                    BG = $BackgroundColor 
-                }
-            }
-        } else {
-            $currentX++
-        }
+        $currentX++
     }
 }
 
@@ -733,222 +595,62 @@ function Write-BufferBox {
         [string]$Title = ""
     )
     
-    # Defensive checks for dimensions
-    if ($Width -lt 2 -or $Height -lt 2) { return } # Minimum size for a box with borders
+    if ($Width -lt 2 -or $Height -lt 2) { return }
     
     $borders = Get-BorderChars -Style $BorderStyle
-    
-    # Calculate effective coordinates considering bounds
-    $startX = [Math]::Max(0, $X)
-    $startY = [Math]::Max(0, $Y)
-    $endX = [Math]::Min($global:TuiState.BufferWidth - 1, $X + $Width - 1)
-    $endY = [Math]::Min($global:TuiState.BufferHeight - 1, $Y + $Height - 1)
-    
-    $actualWidth = $endX - $startX + 1
-    $actualHeight = $endY - $startY + 1
-    
-    if ($actualWidth -lt 2 -or $actualHeight -lt 2) { return } # Box too small after clipping
+    $endX = $X + $Width - 1
+    $endY = $Y + $Height - 1
 
-    # Fill background first within the actual bounds
-    for ($row = $startY; $row -le $endY; $row++) {
-        for ($col = $startX; $col -le $endX; $col++) {
-            $global:TuiState.BackBuffer[$row, $col] = @{ 
-                Char = ' '; FG = [ConsoleColor]::White; BG = $BackgroundColor 
+    for ($row = $Y; $row -le $endY; $row++) {
+        for ($col = $X; $col -le $endX; $col++) {
+            if ($row -ge 0 -and $row -lt $global:TuiState.BufferHeight -and $col -ge 0 -and $col -lt $global:TuiState.BufferWidth) {
+                 if ($row -eq $Y -or $row -eq $endY -or $col -eq $X -or $col -eq $endX) {
+                    # This is border, will be drawn later
+                 } else {
+                    $global:TuiState.BackBuffer[$row, $col] = @{ Char = ' '; FG = [ConsoleColor]::White; BG = $BackgroundColor }
+                 }
             }
         }
     }
 
-    # Top border
-    if ($actualHeight -ge 1) { # Ensure there's space for a top border
-        if ($startX -le $endX) {
-            Write-BufferString -X $startX -Y $startY -Text $borders.TopLeft -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
-        }
-        if ($startX + 1 -le $endX - 1) {
-            Write-BufferString -X ($startX + 1) -Y $startY -Text ($borders.Horizontal * ($actualWidth - 2)) -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
-        }
-        if ($startX -le $endX -1) {
-            Write-BufferString -X $endX -Y $startY -Text $borders.TopRight -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
-        }
+    Write-BufferString -X $X -Y $Y -Text ($borders.TopLeft + ($borders.Horizontal * ($Width - 2)) + $borders.TopRight) -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
+    for ($i = 1; $i -lt ($Height - 1); $i++) {
+        Write-BufferString -X $X -Y ($Y + $i) -Text $borders.Vertical -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
+        Write-BufferString -X $endX -Y ($Y + $i) -Text $borders.Vertical -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
     }
+    Write-BufferString -X $X -Y $endY -Text ($borders.BottomLeft + ($borders.Horizontal * ($Width - 2)) + $borders.BottomRight) -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
     
-    # Title if provided
     if ($Title) {
         $titleText = " $Title "
-        $displayTitleWidth = $actualWidth - 2 # Space inside borders
-        
-        if ($titleText.Length -gt $displayTitleWidth) {
-            $maxLength = [Math]::Max(0, $displayTitleWidth - 3) # Account for "..."
-            if ($maxLength -ge 0) {
-                $titleText = $titleText.Substring(0, $maxLength) + "..."
-            } else {
-                $titleText = "" # Not enough space for "..."
-            }
-        }
-        
-        $titleX = $startX + [Math]::Floor(($actualWidth - $titleText.Length) / 2)
-        # Ensure title starts and ends within horizontal border area
-        $titleX = [Math]::Max($startX + 1, [Math]::Min($endX - $titleText.Length, $titleX))
-
-        Write-BufferString -X $titleX -Y $startY -Text $titleText `
-            -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
-    }
-    
-    # Sides and fill (from second row to second-to-last row)
-    for ($i = 1; $i -lt ($actualHeight - 1); $i++) {
-        $currentRowY = $startY + $i
-        if ($currentRowY -gt $endY) { break } # Should not happen if loop limits are correct
-        
-        # Left vertical border
-        Write-BufferString -X $startX -Y $currentRowY -Text $borders.Vertical `
-            -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
-        
-        # Fill inner content area
-        if ($actualWidth - 2 -gt 0) {
-            Write-BufferString -X ($startX + 1) -Y $currentRowY -Text (' ' * ($actualWidth - 2)) `
-                -BackgroundColor $BackgroundColor
-        }
-        
-        # Right vertical border
-        Write-BufferString -X $endX -Y $currentRowY -Text $borders.Vertical `
-            -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
-    }
-    
-    # Bottom border
-    if ($actualHeight -ge 1) { # Ensure there's space for a bottom border
-        $bottomY = $endY
-        if ($bottomY -ge $startY) { # Ensure bottomY is valid
-            if ($startX -le $endX) {
-                Write-BufferString -X $startX -Y $bottomY `
-                    -Text $borders.BottomLeft -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
-            }
-            if ($startX + 1 -le $endX - 1) {
-                Write-BufferString -X ($startX + 1) -Y $bottomY `
-                    -Text ($borders.Horizontal * ($actualWidth - 2)) -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
-            }
-            if ($startX -le $endX -1) {
-                Write-BufferString -X $endX -Y $bottomY `
-                    -Text $borders.BottomRight -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
-            }
-        }
+        $titleX = $X + [Math]::Floor(($Width - $titleText.Length) / 2)
+        Write-BufferString -X $titleX -Y $Y -Text $titleText -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
     }
 }
 
 #endregion
 
-#region Component Focus Management
+#region Component Focus Management (Delegated to focus-manager)
+# The TUI engine no longer directly manages focus, but provides legacy shims for components that might still call them.
 
 function Set-ComponentFocus {
     param([PSCustomObject]$Component)
-    
-    Invoke-WithErrorHandling -Component "TuiEngine.SetFocus" -Context @{ Operation = "SetComponentFocus"; ComponentName = $Component?.Name } -ScriptBlock {
-        # Blur current focused component
-        if ($global:TuiState.FocusedComponent -and 
-            $global:TuiState.FocusedComponent -ne $Component) {
-            $global:TuiState.FocusedComponent.IsFocused = $false
-            # Ensure OnBlur exists as a ScriptMethod (or other callable member type)
-            if ($global:TuiState.FocusedComponent.PSObject.ScriptMethods['OnBlur']) {
-                $global:TuiState.FocusedComponent.OnBlur() # Direct call, no & needed for ScriptMethod
-            }
-        }
-
-        # Clear focus if null component
-        if ($null -eq $Component) {
-            $global:TuiState.FocusedComponent = $null
-            Request-TuiRefresh
-            return
-        }
-
-        # Validate component can be focused
-        if ($Component.PSObject.Properties['IsFocusable'] -and $Component.IsFocusable -ne $true -or 
-            $Component.PSObject.Properties['Visible'] -and $Component.Visible -ne $true) {
-            Write-Log -Level Debug -Message "Set-ComponentFocus ignored for non-focusable or invisible component '$($Component.Name)'"
-            return
-        }
-
-        # Set new focus
-        $global:TuiState.FocusedComponent = $Component
-        $Component.IsFocused = $true
-        
-        # Ensure OnFocus exists as a ScriptMethod (or other callable member type)
-        if ($Component.PSObject.ScriptMethods['OnFocus']) {
-            $Component.OnFocus() # Direct call, no & needed for ScriptMethod
-        }
-        
-        Request-TuiRefresh
-        
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Warning -Message "Set focus error" -Data $Exception
+    if (Get-Command Request-Focus -ErrorAction SilentlyContinue) {
+        Request-Focus -Component $Component -Reason "LegacySetComponentFocus"
     }
 }
 
 function Handle-TabNavigation {
     param([bool]$Reverse = $false)
-    
-    Invoke-WithErrorHandling -Component "TuiEngine.TabNavigation" -Context @{ Operation = "HandleTabNavigation"; Reverse = $Reverse } -ScriptBlock {
-        $currentScreen = $global:TuiState.CurrentScreen
-        if (-not $currentScreen) { return }
-
-        $focusable = @() # Local variable for this function call
-        
-        $findFocusable = {
-            param($component)
-            # Ensure IsFocusable and Visible properties exist before checking them
-            if ($component -and 
-                $component.PSObject.Properties['IsFocusable'] -and $component.IsFocusable -eq $true -and 
-                $component.PSObject.Properties['Visible'] -and $component.Visible -eq $true) {
-                $focusable += $component 
-            }
-            if ($component -and $component.PSObject.Properties['Children'] -and $component.Children) {
-                foreach ($child in $component.Children) {
-                    & $findFocusable -component $child
-                }
-            }
-        }
-        
-        # Start from screen's RootPanel (if available) or children directly
-        # Changed logic to always start traversal from CurrentScreen.RootPanel, consistent with focus-manager and dialog-system
-        if ($currentScreen.RootPanel) {
-            & $findFocusable -component $currentScreen.RootPanel
-        } elseif ($currentScreen.Children) { # Fallback for screens without a dedicated RootPanel
-            foreach ($child in $currentScreen.Children) {
-                & $findFocusable -component $child
-            }
-        }
-
-        if ($focusable.Count -eq 0) {
-            Write-Log -Level Debug -Message "No focusable components found on current screen for tab navigation."
-            return
-        }
-
-        # Sort by Y then X for a natural tab order
-        $sortedFocusable = $focusable | Sort-Object { $_.Y }, { $_.X }
-
-        # Find current index
-        $currentIndex = [array]::IndexOf($sortedFocusable, $global:TuiState.FocusedComponent)
-        
-        # Calculate next index
-        $nextIndex = 0
-        if ($currentIndex -ne -1) {
-            $direction = if ($Reverse) { -1 } else { 1 }
-            $nextIndex = ($currentIndex + $direction + $sortedFocusable.Count) % $sortedFocusable.Count
-        } else {
-            # If no component is currently focused, start from the beginning (or end if reversing)
-            $nextIndex = if ($Reverse) { $sortedFocusable.Count - 1 } else { 0 }
-        }
-
-        Set-ComponentFocus -Component $sortedFocusable[$nextIndex]
-        
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Warning -Message "Tab navigation error" -Data $Exception
+    if (Get-Command Move-Focus -ErrorAction SilentlyContinue) {
+        Move-Focus -Reverse:$Reverse
     }
 }
 
 function Clear-ComponentFocus {
-    Set-ComponentFocus -Component $null
+    if (Get-Command Request-Focus -ErrorAction SilentlyContinue) {
+        Request-Focus -Component $null -Reason "LegacyClearComponentFocus"
+    }
 }
-
 #endregion
 
 #region Utility Functions
@@ -961,85 +663,51 @@ function Get-BorderChars {
     param([string]$Style)
     
     $styles = @{
-        Single = @{
-            TopLeft = '┌'; TopRight = '┐'
-            BottomLeft = '└'; BottomRight = '┘'
-            Horizontal = '─'; Vertical = '│'
-        }
-        Double = @{
-            TopLeft = '╔'; TopRight = '╗'
-            BottomLeft = '╚'; BottomRight = '╝'
-            Horizontal = '═'; Vertical = '║'
-        }
-        Rounded = @{
-            TopLeft = '╭'; TopRight = '╮'
-            BottomLeft = '╰'; BottomRight = '╯'
-            Horizontal = '─'; Vertical = '│'
-        }
+        Single = @{ TopLeft = '┌'; TopRight = '┐'; BottomLeft = '└'; BottomRight = '┘'; Horizontal = '─'; Vertical = '│' }
+        Double = @{ TopLeft = '╔'; TopRight = '╗'; BottomLeft = '╚'; BottomRight = '╝'; Horizontal = '═'; Vertical = '║' }
+        Rounded = @{ TopLeft = '╭'; TopRight = '╮'; BottomLeft = '╰'; BottomRight = '╯'; Horizontal = '─'; Vertical = '│' }
     }
     
-    if ($styles.ContainsKey($Style)) {
-        return $styles[$Style]
-    } else {
-        return $styles.Single
-    }
+    return $styles[$Style] ?? $styles.Single
 }
 
 function Get-AnsiColorCode {
-    param(
-        [ConsoleColor]$Color,
-        [bool]$IsBackground
-    )
+    param([ConsoleColor]$Color, [bool]$IsBackground)
     
     $map = @{
-        Black = 30; DarkBlue = 34; DarkGreen = 32; DarkCyan = 36
-        DarkRed = 31; DarkMagenta = 35; DarkYellow = 33; Gray = 37
-        DarkGray = 90; Blue = 94; Green = 92; Cyan = 96
-        Red = 91; Magenta = 95; Yellow = 93; White = 97
+        Black = 30; DarkBlue = 34; DarkGreen = 32; DarkCyan = 36; DarkRed = 31; DarkMagenta = 35; DarkYellow = 33; Gray = 37
+        DarkGray = 90; Blue = 94; Green = 92; Cyan = 96; Red = 91; Magenta = 95; Yellow = 93; White = 97
     }
     
     $code = $map[$Color.ToString()]
     if ($IsBackground) {
         return $code + 10
-    } else {
+    }
+    else {
         return $code
     }
 }
 
 function Get-WordWrappedLines {
-    param(
-        [string]$Text,
-        [int]$MaxWidth
-    )
+    param([string]$Text, [int]$MaxWidth)
     
     if ([string]::IsNullOrEmpty($Text) -or $MaxWidth -le 0) { return @() }
     
-    $lines = @()
-    # Split by whitespace, but keep original spaces for reconstruction if possible
-    # This regex splits by one or more whitespace characters, so original spacing is lost
-    $words = $Text -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } # Remove empty strings from split
-    
-    $sb = New-Object System.Text.StringBuilder
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $words = $Text -split '\s+' | Where-Object { $_ }
+    $currentLine = ""
     
     foreach ($word in $words) {
-        if ($sb.Length -eq 0) {
-            [void]$sb.Append($word)
-        } elseif (($sb.Length + 1 + $word.Length) -le $MaxWidth) {
-            [void]$sb.Append(' ')
-            [void]$sb.Append($word)
+        if (($currentLine + $word).Length -le $MaxWidth) {
+            $currentLine += "$word "
         } else {
-            # If adding the next word with a space exceeds max width
-            $lines += $sb.ToString()
-            [void]$sb.Clear()
-            [void]$sb.Append($word)
+            $lines.Add($currentLine.Trim())
+            $currentLine = "$word "
         }
     }
+    if ($currentLine) { $lines.Add($currentLine.Trim()) }
     
-    if ($sb.Length -gt 0) {
-        $lines += $sb.ToString()
-    }
-    
-    return $lines
+    return $lines.ToArray()
 }
 
 #endregion
@@ -1050,37 +718,25 @@ function Cleanup-TuiEngine {
     Invoke-WithErrorHandling -Component "TuiEngine.Cleanup" -Context @{ Operation = "Cleanup" } -ScriptBlock {
         Write-Log -Level Info -Message "Cleaning up TUI Engine"
         
-        # Cancel input thread
         if ($global:TuiState.CancellationTokenSource) {
-            try {
-                if (-not $global:TuiState.CancellationTokenSource.IsCancellationRequested) {
-                    $global:TuiState.CancellationTokenSource.Cancel()
-                }
-            } catch {}
+            try { if (-not $global:TuiState.CancellationTokenSource.IsCancellationRequested) { $global:TuiState.CancellationTokenSource.Cancel() } } catch {}
         }
 
-        # Clean up PowerShell instance
         if ($global:TuiState.InputPowerShell) {
-            if ($global:TuiState.InputAsyncResult) {
-                try { $global:TuiState.InputPowerShell.EndInvoke($global:TuiState.InputAsyncResult) } catch {}
-            }
+            try { if ($global:TuiState.InputAsyncResult) { $global:TuiState.InputPowerShell.EndInvoke($global:TuiState.InputAsyncResult) } } catch {}
             try { $global:TuiState.InputPowerShell.Dispose() } catch {}
         }
         
-        # Clean up runspace
         if ($global:TuiState.InputRunspace) {
             try { $global:TuiState.InputRunspace.Dispose() } catch {}
         }
         
-        # Dispose cancellation token
         if ($global:TuiState.CancellationTokenSource) {
             try { $global:TuiState.CancellationTokenSource.Dispose() } catch {}
         }
 
-        # Clean up event handlers
         Cleanup-EventHandlers
         
-        # Reset console
         try {
             if ([System.Environment]::UserInteractive) {
                 [Console]::Write("$([char]27)[0m")
@@ -1089,10 +745,6 @@ function Cleanup-TuiEngine {
                 [Console]::ResetColor()
             }
         } catch {}
-        
-    } -ErrorHandler {
-        param($Exception)
-        Write-Log -Level Warning -Message "Cleanup error" -Data $Exception
     }
 }
 
@@ -1100,32 +752,16 @@ function Cleanup-EventHandlers {
     if (-not $global:TuiState.EventHandlers) { return }
 
     foreach ($handlerId in $global:TuiState.EventHandlers.Values) {
-        try { 
-            Unregister-Event -SubscriptionId $handlerId -ErrorAction SilentlyContinue
-        } catch {}
+        try { Unregister-Event -SubscriptionId $handlerId -ErrorAction SilentlyContinue } catch {}
     }
-    
     $global:TuiState.EventHandlers.Clear()
 }
 
 #endregion
 
-# Export functions
 Export-ModuleMember -Function @(
-    'Initialize-TuiEngine',
-    'Start-TuiLoop',
-    'Request-TuiRefresh',
-    'Push-Screen',
-    'Pop-Screen',
-    'Write-BufferString',
-    'Write-BufferBox',
-    'Clear-BackBuffer',
-    'Set-ComponentFocus',
-    'Clear-ComponentFocus',
-    'Handle-TabNavigation',
-    'Get-BorderChars',
-    'Get-AnsiColorCode',
-    'Get-WordWrappedLines',
-    'Render-Frame',
-    'Cleanup-TuiEngine'
-) -Variable @('TuiState')
+    'Initialize-TuiEngine', 'Start-TuiLoop', 'Request-TuiRefresh', 'Push-Screen', 'Pop-Screen',
+    'Write-BufferString', 'Write-BufferBox', 'Clear-BackBuffer', 'Set-ComponentFocus',
+    'Clear-ComponentFocus', 'Handle-TabNavigation', 'Get-BorderChars', 'Get-AnsiColorCode',
+    'Get-WordWrappedLines', 'Render-Frame', 'Cleanup-TuiEngine'
+) -Variable 'TuiState'

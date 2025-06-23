@@ -1,3 +1,4 @@
+####\services\task-service.psm1
 #
 # services/task-service.psm1
 #
@@ -15,11 +16,6 @@ using namespace System.Collections.Generic
 $ErrorActionPreference = 'SilentlyContinue'
 Unregister-Event -SourceIdentifier 'TaskService'
 $ErrorActionPreference = 'Stop'
-
-
-# Register the event source that this service will use to broadcast changes.
-# Screens can subscribe to this to know when to refresh their data.
-Register-EngineEvent -SourceIdentifier 'TaskService' -SupportEvent
 
 
 function Initialize-TaskService {
@@ -48,7 +44,6 @@ function Initialize-TaskService {
 
     # Method to broadcast that the task list has changed.
     $announceChangeScript = {
-        # FIX: Changed Context from string to hashtable
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'AnnounceChange' } -ScriptBlock {
             Write-Log -Level Trace -Message "Broadcasting 'Tasks.Changed' event from SourceIdentifier 'TaskService'."
             New-Event -SourceIdentifier 'TaskService' -EventIdentifier 'Tasks.Changed'
@@ -58,7 +53,6 @@ function Initialize-TaskService {
 
     # Method to save the current list of tasks to the JSON file.
     $saveTasksScript = {
-        # FIX: Changed Context from string to hashtable
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'SaveTasks' } -ScriptBlock {
             Write-Log -Level Trace -Message "Saving $($this._tasks.Count) tasks to $($this._persistencePath)"
             $directory = Split-Path -Path $this._persistencePath -Parent
@@ -76,7 +70,6 @@ function Initialize-TaskService {
 
     # Method to load tasks from the JSON file.
     $loadTasksScript = {
-        # FIX: Changed Context from string to hashtable
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'LoadTasks' } -ScriptBlock {
             Write-Log -Level Trace -Message "Attempting to load tasks from $($this._persistencePath)"
             if (Test-Path $this._persistencePath) {
@@ -127,7 +120,6 @@ function Initialize-TaskService {
             [Parameter(Mandatory)]
             [string]$TaskId
         )
-        # FIX: Changed Context from string to hashtable, added relevant data
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'GetTaskById'; TaskId = $TaskId } -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($TaskId)) { throw "TaskId cannot be empty." }
 
@@ -146,7 +138,6 @@ function Initialize-TaskService {
             [Parameter(Mandatory)]
             [hashtable]$TaskData
         )
-        # FIX: Changed Context from string to hashtable, added relevant data
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'AddTask'; Title = $TaskData.Title } -ScriptBlock {
             if (-not $TaskData.ContainsKey('Title') -or [string]::IsNullOrWhiteSpace($TaskData.Title)) {
                 throw "Task 'Title' is a required property and cannot be empty."
@@ -183,7 +174,6 @@ function Initialize-TaskService {
             [Parameter(Mandatory)]
             [hashtable]$Updates
         )
-        # FIX: Changed Context from string to hashtable, added relevant data
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'UpdateTask'; TaskId = $TaskId; UpdatesKeys = $Updates.Keys } -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($TaskId)) { throw 'TaskId cannot be empty.' }
             if ($Updates.Count -eq 0) {
@@ -227,7 +217,6 @@ function Initialize-TaskService {
             [Parameter(Mandatory)]
             [string]$TaskId
         )
-        # FIX: Changed Context from string to hashtable, added relevant data
         Invoke-WithErrorHandling -Component 'TaskService' -Context @{ Operation = 'DeleteTask'; TaskId = $TaskId } -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($TaskId)) { throw 'TaskId cannot be empty.' }
 
