@@ -1,0 +1,80 @@
+2025-06-24 05:17:03.674 [Info   ]  [logger.psm1:145] Logger initialized
+  Data: {"PowerShellVersion":"7.5.1","InitializedAt":"2025-06-24 05:17:03.665","OS":"Microsoft Windows 10.0.19045","ProcessId":15640,"LogPath":"C:\\Users\\jhnhe\\AppData\\Local\\Temp\\PMCTerminal\\pmc_terminal_2025-06-24.log"}
+2025-06-24 05:17:03.735 [Info   ]  [Start-PMCTerminal.ps1:146] PMC Terminal v5 startup initiated.
+2025-06-24 05:17:03.868 [Info   ]  [tui-engine.psm1:56] Initializing TUI Engine: 120x29
+2025-06-24 05:17:03.956 [Debug  ]  [tui-engine.psm1:107] Initializing input thread
+2025-06-24 05:17:03.998 [Debug  ]  [tui-engine.psm1:164] Input thread initialized
+2025-06-24 05:17:04.009 [Info   ]  [tui-engine.psm1:101] TUI Engine initialized successfully
+2025-06-24 05:17:04.022 [Trace  ]  [task-service.psm1:34] Initializing Task Service...
+2025-06-24 05:17:04.040 [Trace  ]  [task-service.psm1:74] Attempting to load tasks from C:\Users\jhnhe\AppData\Local\PMCTerminal\tasks.json
+2025-06-24 05:17:04.048 [Info   ]  [task-service.psm1:102] tasks.json not found. Initializing with an empty task list.
+2025-06-24 05:17:04.059 [Info   ]  [task-service.psm1:249] Task Service initialized with 0 tasks.
+2025-06-24 05:17:04.071 [Debug  ]  [keybindings.psm1:12] Initializing KeybindingService...
+2025-06-24 05:17:04.082 [Debug  ]  [keybindings.psm1:134] KeybindingService initialized with 34 actions.
+2025-06-24 05:17:04.093 [Debug  ]  [navigation.psm1:10] Initializing NavigationService...
+2025-06-24 05:17:04.102 [Debug  ]  [navigation.psm1:92] NavigationService initialized.
+2025-06-24 05:17:04.116 [Info   ]  [focus-manager.psm1:96] Initializing Focus Manager...
+2025-06-24 05:17:04.136 [Debug  ]  [focus-manager.psm1:153] Also subscribed to fallback ScreenPushed event
+2025-06-24 05:17:04.145 [Info   ]  [focus-manager.psm1:158] Focus Manager initialized and subscribed to 'PMC.Navigation.ScreenPushed'.
+2025-06-24 05:17:04.196 [Trace  ]  [navigation.psm1:30] Registering route: /dashboard
+2025-06-24 05:17:04.214 [Trace  ]  [navigation.psm1:30] Registering route: /task
+2025-06-24 05:17:04.231 [Info   ]  [navigation.psm1:55] Navigating to path: /dashboard
+2025-06-24 05:17:04.243 [Info   ]  [dashboard-screen.psm1:9] Creating Ultra Simple Dashboard
+2025-06-24 05:17:04.266 [Info   ]  [dashboard-screen.psm1:19] Building Ultra Simple UI
+2025-06-24 05:17:04.277 [Info   ]  [dashboard-screen.psm1:48] Ultra Simple UI built
+2025-06-24 05:17:04.293 [Info   ]  [dashboard-screen.psm1:68] RootPanel has Render method: True
+2025-06-24 05:17:04.303 [Info   ]  [dashboard-screen.psm1:69] RootPanel ScriptMethods: 
+2025-06-24 05:17:04.316 [Debug  ]  [tui-engine.psm1:544] Pushing screen: UltraSimpleDashboard
+2025-06-24 05:17:04.329 [Debug  ]  [tui-engine.psm1:574] Firing ScreenPushed event for screen: UltraSimpleDashboard
+2025-06-24 05:17:04.341 [Debug  ]  [focus-manager.psm1:111] Focus Manager received ScreenPushed event
+2025-06-24 05:17:04.353 [Debug  ]  [focus-manager.psm1:124] Got screen from global TUI state: UltraSimpleDashboard
+2025-06-24 05:17:04.363 [Info   ]  [focus-manager.psm1:131] Focus Manager processing screen: UltraSimpleDashboard
+2025-06-24 05:17:04.535 [Info   ]  [focus-manager.psm1:170] Updating tab order for screen 'UltraSimpleDashboard'
+2025-06-24 05:17:04.550 [Debug  ]  [focus-manager.psm1:254] Request-Focus called for component: null, Reason: ScreenChange
+2025-06-24 05:17:04.560 [Info   ]  [focus-manager.psm1:288] Focus changed from 'null' to 'null' (Reason: ScreenChange)
+2025-06-24 05:17:04.570 [Debug  ]  [focus-manager.psm1:181] Screen RootPanel: SimpleRoot, Type: Panel
+2025-06-24 05:17:04.688 [Debug  ]  [focus-manager.psm1:22] === FOCUS MANAGER: Finding focusable components ===
+2025-06-24 05:17:04.698 [Debug  ]  [focus-manager.psm1:23] Starting from root component: SimpleRoot, Type: Panel
+2025-06-24 05:17:04.711 [Debug  ]  [focus-manager.psm1:39] Processing component: SimpleRoot, Type: Panel, Visible: True, IsFocusable: 
+2025-06-24 05:17:04.722 [Debug  ]  [focus-manager.psm1:47]   HasIsFocusable: False, HasVisible: True, IsFocusable: False, IsVisible: True
+2025-06-24 05:17:04.733 [Debug  ]  [focus-manager.psm1:65]   Component has no children or Children property
+2025-06-24 05:17:04.742 [Info   ]  [focus-manager.psm1:69] Focus Manager processed 1 components and found 0 focusable components
+2025-06-24 05:17:04.751 [Warning]  [focus-manager.psm1:79] No focusable components found!
+2025-06-24 05:17:04.761 [Debug  ]  [focus-manager.psm1:82] === END FOCUS MANAGER: Finding focusable components ===
+2025-06-24 05:17:04.771 [Warning]  [focus-manager.psm1:196] No focusable components found on screen 'UltraSimpleDashboard'
+2025-06-24 05:17:04.780 [Debug  ]  [focus-manager.psm1:199] Attempting fallback component discovery...
+2025-06-24 05:17:04.790 [Debug  ]  [focus-manager.psm1:218] Attempting global TUI state fallback...
+2025-06-24 05:17:04.801 [Debug  ]  [focus-manager.psm1:111] Focus Manager received ScreenPushed event
+2025-06-24 05:17:04.812 [Debug  ]  [focus-manager.psm1:124] Got screen from global TUI state: UltraSimpleDashboard
+2025-06-24 05:17:04.821 [Info   ]  [focus-manager.psm1:131] Focus Manager processing screen: UltraSimpleDashboard
+2025-06-24 05:17:04.984 [Info   ]  [focus-manager.psm1:170] Updating tab order for screen 'UltraSimpleDashboard'
+2025-06-24 05:17:04.995 [Debug  ]  [focus-manager.psm1:254] Request-Focus called for component: null, Reason: ScreenChange
+2025-06-24 05:17:05.019 [Info   ]  [focus-manager.psm1:288] Focus changed from 'null' to 'null' (Reason: ScreenChange)
+2025-06-24 05:17:05.029 [Debug  ]  [focus-manager.psm1:181] Screen RootPanel: SimpleRoot, Type: Panel
+2025-06-24 05:17:05.143 [Debug  ]  [focus-manager.psm1:22] === FOCUS MANAGER: Finding focusable components ===
+2025-06-24 05:17:05.153 [Debug  ]  [focus-manager.psm1:23] Starting from root component: SimpleRoot, Type: Panel
+2025-06-24 05:17:05.162 [Debug  ]  [focus-manager.psm1:39] Processing component: SimpleRoot, Type: Panel, Visible: True, IsFocusable: 
+2025-06-24 05:17:05.171 [Debug  ]  [focus-manager.psm1:47]   HasIsFocusable: False, HasVisible: True, IsFocusable: False, IsVisible: True
+2025-06-24 05:17:05.180 [Debug  ]  [focus-manager.psm1:65]   Component has no children or Children property
+2025-06-24 05:17:05.189 [Info   ]  [focus-manager.psm1:69] Focus Manager processed 1 components and found 0 focusable components
+2025-06-24 05:17:05.198 [Warning]  [focus-manager.psm1:79] No focusable components found!
+2025-06-24 05:17:05.208 [Debug  ]  [focus-manager.psm1:82] === END FOCUS MANAGER: Finding focusable components ===
+2025-06-24 05:17:05.217 [Warning]  [focus-manager.psm1:196] No focusable components found on screen 'UltraSimpleDashboard'
+2025-06-24 05:17:05.226 [Debug  ]  [focus-manager.psm1:199] Attempting fallback component discovery...
+2025-06-24 05:17:05.235 [Debug  ]  [focus-manager.psm1:218] Attempting global TUI state fallback...
+2025-06-24 05:17:05.244 [Debug  ]  [tui-engine.psm1:582] ScreenPushed event fired successfully
+2025-06-24 05:17:05.263 [Info   ]  [tui-engine.psm1:191] Starting TUI main loop
+2025-06-24 05:17:05.278 [Verbose]  [tui-engine.psm1:253] Processing input queue
+2025-06-24 05:17:05.298 [Verbose]  [tui-engine.psm1:338] Starting recursive frame render
+2025-06-24 05:17:05.326 [Debug  ]  [tui-engine.psm1:397] Current screen: UltraSimpleDashboard
+2025-06-24 05:17:05.338 [Debug  ]  [tui-engine.psm1:401] Found RootPanel on current screen
+2025-06-24 05:17:05.352 [Debug  ]  [tui-engine.psm1:371] Collecting component: SimpleRoot at X=0, Y=0
+2025-06-24 05:17:05.366 [Debug  ]  [tui-engine.psm1:427] Collected 1 components for rendering
+2025-06-24 05:17:05.380 [Debug  ]  [tui-engine.psm1:444] Component has no Render method: SimpleRoot
+2025-06-24 05:17:05.397 [Debug  ]  [tui-engine.psm1:469] Starting buffer render (Frame: 0)
+2025-06-24 05:17:05.479 [Debug  ]  [tui-engine.psm1:518] Writing 3686 characters to console
+2025-06-24 05:17:05.500 [Verbose]  [tui-engine.psm1:253] Processing input queue
+2025-06-24 05:17:05.532 [Verbose]  [tui-engine.psm1:253] Processing input queue
+2025-06-24 05:17:05.553 [Verbose]  [tui-engine.psm1:253] Processing input queue
+
+2025-06-24 05:17:11.430 [Info   ]  [tui-engine.psm1:847] Cleaning up TUI Engine

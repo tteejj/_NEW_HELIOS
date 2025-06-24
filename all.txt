@@ -3760,448 +3760,90 @@ Export-ModuleMember -Function @(
 
 
 ####\screens\dashboard-screen.psm1
-# FILE: screens/dashboard-screen.psm1
-# PURPOSE: Provides the main dashboard screen for PMC Terminal v5.
-# FULLY FIXED VERSION with robust component construction and focus management
+# Ultra-simple Dashboard - Direct buffer writing test
 
-function Get-HeliosDashboardScreen {
-    <#
-    .SYNOPSIS
-        Creates a new Dashboard screen object for PMC Terminal v5.
-    .DESCRIPTION
-        This factory function constructs a [PSCustomObject] representing the dashboard screen.
-        It sets up the UI layout using Helios panels and components, defines event handlers
-        for user interactions (button clicks, key presses), and manages navigation via
-        the NavigationService. COMPLETE FIX with guaranteed focus management.
-    .PARAMETER Services
-        A PSCustomObject containing references to all initialized application services
-        (e.g., Task, Navigation, Keybindings). This is crucial for dependency injection.
-    .OUTPUTS
-        [PSCustomObject] The initialized screen object.
-    #>
-    [CmdletBinding()]
-    [OutputType([PSCustomObject])]
+function New-UltraSimpleDashboard {
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory)]
         [PSCustomObject]$Services
     )
-
-    Invoke-WithErrorHandling -Component "Get-HeliosDashboardScreen" -Context @{} -ScriptBlock {
-        Write-Log -Level Trace -Message "Creating Helios Dashboard Screen object."
-
-        # Defensive: Ensure Services object is valid and contains required services
-        if (-not $Services) {
-            throw "Services object must be provided to Get-HeliosDashboardScreen."
-        }
-        if (-not $Services.Navigation) {
-            throw "NavigationService is missing from the provided Services object."
-        }
-        if (-not $Services.Keybindings) {
-            throw "KeybindingService is missing from the provided Services object."
-        }
-
-        $screen = [PSCustomObject]@{
-            Name                  = "HeliosDashboardScreen"
-            _services             = $Services
-            _isInitialized        = $false 
-            _eventSubscriptions   = [System.Collections.ArrayList]::new()
-            _rootPanel            = $null
-            _menuButtons          = [System.Collections.ArrayList]::new()
-            _focusedButtonIndex   = 0
-            _componentId          = [Guid]::NewGuid().ToString()
-            Visible               = $true
-            ZIndex                = 0
-        }
-
-        # CRITICAL FIX: Build UI method with comprehensive debugging and proper component construction
-        $buildUiScript = {
-            Invoke-WithErrorHandling -Component "$($this.Name)._BuildUI" -Context @{} -ScriptBlock {
-                Write-Log -Level Debug -Message "Building UI for Dashboard Screen."
-
-                # Define menu items with their paths and display text
-                $menuItems = @(
-                    @{ Text = "1. View Tasks"; Path = "/task"; Enabled = $true }
-                    @{ Text = "2. New Time Entry"; Path = "/time-entry"; Enabled = $false }
-                    @{ Text = "3. Start Timer"; Path = "/timer-start"; Enabled = $false }
-                    @{ Text = "4. View Projects"; Path = "/project"; Enabled = $false }
-                    @{ Text = "5. Reports"; Path = "/reports"; Enabled = $false }
-                    @{ Text = "6. Settings"; Path = "/settings"; Enabled = $false }
-                    @{ Text = "0. Exit Terminal"; Path = "/exit"; Enabled = $true }
-                )
-
-                # Create the main root panel for the screen
-                $this._rootPanel = New-HeliosStackPanel -Props @{
-                    Name        = "DashboardRootPanel"
-                    X           = 2
-                    Y           = 2
-                    Width       = [Math]::Max(60, ($global:TuiState.BufferWidth - 4))
-                    Height      = [Math]::Max(20, ($global:TuiState.BufferHeight - 4))
-                    ShowBorder  = $true
-                    Title       = " PMC Terminal v5 - Main Menu "
-                    Orientation = "Vertical"
-                    Spacing     = 1
-                    Padding     = 2
-                    Visible     = $true
-                    BackgroundColor = (Get-ThemeColor "Background")
-                }
-                
-                if (-not $this._rootPanel) { 
-                    throw "Failed to create DashboardRootPanel." 
-                }
-                
-                Write-Log -Level Debug -Message "Created root panel: $($this._rootPanel.Name), Visible: $($this._rootPanel.Visible)"
-
-                # Add an instruction label
-                $instructionLabel = New-HeliosLabel -Props @{
-                    Name = "InstructionLabel"
-                    Text = "Use Arrow Keys, Number Keys, or Enter to Navigate"
-                    Width = 60
-                    Height = 1
-                    Visible = $true
-                    ForegroundColor = (Get-ThemeColor "Subtle")
-                }
-                $this._rootPanel.AddChild($instructionLabel)
-                Write-Log -Level Debug -Message "Added instruction label, root panel children count: $($this._rootPanel.Children.Count)"
-
-                # Create a panel for the menu buttons
-                $menuPanel = New-HeliosStackPanel -Props @{
-                    Name        = "MenuButtonPanel"
-                    Orientation = "Vertical"
-                    Spacing     = 1
-                    Padding     = 1
-                    Width       = $this._rootPanel.Width - 4
-                    Height      = ($menuItems.Count * 3) + 2
-                    Visible     = $true
-                }
-                $this._rootPanel.AddChild($menuPanel)
-                Write-Log -Level Debug -Message "Added menu panel, root panel children count: $($this._rootPanel.Children.Count)"
-
-                # CRITICAL FIX: Create buttons with explicit debugging and proper closure handling
-                $buttonCount = 0
-                foreach ($item in $menuItems) {
-                    $buttonText = $item.Text
-                    $buttonPath = $item.Path
-                    $buttonName = "MenuButton_" + ($buttonPath -replace '[^a-zA-Z0-9]', '')
-                    $buttonEnabled = if ($null -ne $item.Enabled) { $item.Enabled } else { $true }
-
-                    Write-Log -Level Debug -Message "Creating button: $buttonName, Enabled: $buttonEnabled"
-
-                    # Capture variables for closure with explicit local copies
-                    $currentScreen = $this
-                    $currentPath = $buttonPath
-                    $isEnabled = $buttonEnabled
-                    $itemText = $buttonText
-
-                    $button = New-HeliosButton -Props @{
-                        Name        = $buttonName
-                        Text        = $itemText
-                        Width       = $menuPanel.Width - 2
-                        Height      = 3
-                        Visible     = $true
-                        IsFocusable = $isEnabled
-                        OnClick     = {
-                            Invoke-WithErrorHandling -Component "$($currentScreen.Name).MenuButton.OnClick" -Context @{ Path = $currentPath } -ScriptBlock {
-                                if (-not $isEnabled) {
-                                    Write-Log -Level Info -Message "Attempted to click disabled button: $currentPath"
-                                    return
-                                }
-                                Write-Log -Level Info -Message "Dashboard button clicked: $currentPath"
-                                if ($currentPath -eq "/exit") {
-                                    Write-Log -Level Info -Message "Exit requested from Dashboard."
-                                    if (Get-Command Stop-TuiEngine -ErrorAction SilentlyContinue) {
-                                        Stop-TuiEngine
-                                    }
-                                } else {
-                                    $currentScreen._services.Navigation.GoTo($currentPath, $currentScreen._services)
-                                }
-                            }
-                        }
-                    }
-                    
-                    # CRITICAL: Verify button properties and ensure all required properties exist
-                    if (-not $button) {
-                        throw "Failed to create button $buttonName"
-                    }
-                    
-                    # Ensure all required properties exist on the button
-                    if (($button.PSObject.Properties.Name -notcontains 'IsFocusable')) {
-                        $button.PSObject.Properties.Add([psnoteproperty]::new('IsFocusable', $isEnabled))
-                    }
-                    if (($button.PSObject.Properties.Name -notcontains 'Visible')) {
-                        $button.PSObject.Properties.Add([psnoteproperty]::new('Visible', $true))
-                    }
-                    if (($button.PSObject.Properties.Name -notcontains 'IsFocused')) {
-                        $button.PSObject.Properties.Add([psnoteproperty]::new('IsFocused', $false))
-                    }
-                    
-                    Write-Log -Level Debug -Message "Button created - Name: $($button.Name), IsFocusable: $($button.IsFocusable), Visible: $($button.Visible), Type: $($button.Type)"
-                    
-                    $menuPanel.AddChild($button)
-                    [void]$this._menuButtons.Add($button)
-                    $buttonCount++
-                    
-                    Write-Log -Level Debug -Message "Added button $buttonCount to menu panel, panel children count: $($menuPanel.Children.Count)"
-                }
-
-                Write-Log -Level Debug -Message "Total buttons created: $buttonCount, Total in _menuButtons: $($this._menuButtons.Count)"
-
-                # Add a status label at the bottom
-                $statusLabel = New-HeliosLabel -Props @{
-                    Name = "StatusLabel"
-                    Text = "Press ESC to return to this menu from any screen"
-                    Width = 60
-                    Height = 1
-                    Visible = $true
-                    ForegroundColor = (Get-ThemeColor "Subtle")
-                }
-                $this._rootPanel.AddChild($statusLabel)
-
-                Write-Log -Level Debug -Message "Dashboard UI built successfully. Root panel children: $($this._rootPanel.Children.Count)"
-                
-                # DEBUGGING: Log complete component hierarchy
-                Write-Log -Level Debug -Message "=== COMPONENT HIERARCHY DEBUG ==="
-                Write-Log -Level Debug -Message "Root Panel: $($this._rootPanel.Name), Children: $($this._rootPanel.Children.Count)"
-                foreach ($child in $this._rootPanel.Children) {
-                    Write-Log -Level Debug -Message "  Child: $($child.Name), Type: $($child.Type), Visible: $($child.Visible), IsFocusable: $($child.IsFocusable)"
-                    if ($child.Children) {
-                        foreach ($grandchild in $child.Children) {
-                            Write-Log -Level Debug -Message "    Grandchild: $($grandchild.Name), Type: $($grandchild.Type), Visible: $($grandchild.Visible), IsFocusable: $($grandchild.IsFocusable)"
-                        }
-                    }
-                }
-                Write-Log -Level Debug -Message "=== END COMPONENT HIERARCHY DEBUG ==="
-                
-                # CRITICAL: Validate that we have focusable components
-                $focusableCount = 0
-                foreach ($button in $this._menuButtons) {
-                    if ($button.IsFocusable -and $button.Visible) {
-                        $focusableCount++
-                    }
-                }
-                Write-Log -Level Info -Message "Dashboard has $focusableCount focusable buttons ready for focus management"
-                
-                if ($focusableCount -eq 0) {
-                    Write-Log -Level Error -Message "Dashboard UI built but no focusable components found! This will cause focus issues."
-                }
-            }
-        }
-        $screen | Add-Member -MemberType ScriptMethod -Name _BuildUI -Value $buildUiScript
-
-        # ENHANCED: Focus management with multiple fallback strategies
-        $setFocusToButton = {
-            param([int]$deltaIndex)
-            Invoke-WithErrorHandling -Component "$($this.Name)._SetFocusToButton" -Context @{ DeltaIndex = $deltaIndex } -ScriptBlock {
-                Write-Log -Level Debug -Message "SetFocusToButton called with delta: $deltaIndex, total buttons: $($this._menuButtons.Count)"
-                
-                if ($this._menuButtons.Count -eq 0) { 
-                    Write-Log -Level Warning -Message "No buttons available for focus"
-                    return 
-                }
-
-                $focusableButtons = ($this._menuButtons | Where-Object { $_.IsFocusable -and $_.Visible }).ToArray()
-                if ($focusableButtons.Count -eq 0) {
-                    Write-Log -Level Warning -Message "No focusable buttons found on dashboard."
-                    return
-                }
-                
-                Write-Log -Level Debug -Message "Found $($focusableButtons.Count) focusable buttons"
-
-                # Find current focused button index in focusable list
-                $currentFocusedButton = if ($this._focusedButtonIndex -ge 0 -and $this._focusedButtonIndex -lt $this._menuButtons.Count) { 
-                    $this._menuButtons[$this._focusedButtonIndex] 
-                } else { 
-                    $null 
-                }
-                
-                $currentFocusableIndex = -1
-                for ($i = 0; $i -lt $focusableButtons.Count; $i++) {
-                    if ($focusableButtons[$i] -eq $currentFocusedButton) {
-                        $currentFocusableIndex = $i
-                        break
-                    }
-                }
-                
-                if ($currentFocusableIndex -eq -1) {
-                    $currentFocusableIndex = 0
-                }
-
-                # Calculate new index with wrapping
-                $newFocusableIndex = ($currentFocusableIndex + $deltaIndex + $focusableButtons.Count) % $focusableButtons.Count
-                $newButton = $focusableButtons[$newFocusableIndex]
-
-                Write-Log -Level Debug -Message "Moving focus from index $currentFocusableIndex to $newFocusableIndex, button: $($newButton.Name)"
-
-                # Remove focus from old button
-                if ($currentFocusedButton -and ($currentFocusedButton.PSObject.Properties.Name -contains 'IsFocused')) {
-                    $currentFocusedButton.IsFocused = $false
-                }
-
-                # Set focus to new button
-                if ($newButton -and ($newButton.PSObject.Properties.Name -contains 'IsFocused')) {
-                    $newButton.IsFocused = $true
-                    
-                    # Use focus manager if available
-                    if (Get-Command Request-Focus -ErrorAction SilentlyContinue) {
-                        Request-Focus -Component $newButton -Reason 'DashboardMenuNavigation'
-                    }
-                    
-                    $this._focusedButtonIndex = $this._menuButtons.IndexOf($newButton)
-                    Write-Log -Level Debug -Message "Focus set to button: $($newButton.Name) at index $($this._focusedButtonIndex)"
-                }
-                
-                if (Get-Command Request-TuiRefresh -ErrorAction SilentlyContinue) {
-                    Request-TuiRefresh
-                }
-            }
-        }
-        $screen | Add-Member -MemberType ScriptMethod -Name _SetFocusToButton -Value $setFocusToButton
-
-        # Screen lifecycle methods
-        $initScript = {
-            param([Parameter(Mandatory = $true)][PSCustomObject]$services)
-            Invoke-WithErrorHandling -Component "$($this.Name).Init" -Context @{} -ScriptBlock {
-                Write-Log -Level Info -Message "Initializing Dashboard Screen."
-                # Services already set in factory
-                Write-Log -Level Info -Message "Dashboard Screen initialized successfully."
-            }
-        }
-        $screen | Add-Member -MemberType ScriptMethod -Name Init -Value $initScript
-
-        $onEnterScript = {
-            Invoke-WithErrorHandling -Component "$($this.Name).OnEnter" -Context @{} -ScriptBlock {
-                Write-Log -Level Info -Message "Dashboard OnEnter: Setting initial focus."
-                
-                # CRITICAL FIX: Ensure components are visible and give focus manager time
-                Start-Sleep -Milliseconds 150
-                
-                # Set focus to first focusable button
-                if ($this._menuButtons.Count -gt 0) {
-                    $this._SetFocusToButton(0)
-                }
-                
-                # Force focus manager refresh if available
-                if (Get-Command Force-RefreshFocus -ErrorAction SilentlyContinue) {
-                    Start-Sleep -Milliseconds 100
-                    Force-RefreshFocus
-                }
-                
-                if (Get-Command Request-TuiRefresh -ErrorAction SilentlyContinue) {
-                    Request-TuiRefresh
-                }
-            }
-        }
-        $screen | Add-Member -MemberType ScriptMethod -Name OnEnter -Value $onEnterScript
-
-        $onExitScript = {
-            Invoke-WithErrorHandling -Component "$($this.Name).OnExit" -Context @{} -ScriptBlock {
-                Write-Log -Level Info -Message "Exiting Dashboard Screen. Cleaning up subscriptions."
-                foreach ($sub in $this._eventSubscriptions) {
-                    try {
-                        Unregister-Event -SubscriptionId $sub.Id
-                        Write-Log -Level Debug -Message "Unregistered event subscription: $($sub.Id)"
-                    } catch {
-                        Write-Log -Level Warning -Message "Failed to unregister event subscription $($sub.Id): $($_.Exception.Message)"
-                    }
-                }
-                $this._eventSubscriptions.Clear()
-                Write-Log -Level Info -Message "Dashboard Screen OnExit completed."
-            }
-        }
-        $screen | Add-Member -MemberType ScriptMethod -Name OnExit -Value $onExitScript
-
-        $handleInputScript = {
-            param([Parameter(Mandatory = $true)][System.ConsoleKeyInfo]$Key)
-            Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -Context @{ Key = $Key.Key } -ScriptBlock {
-                $keybindingSvc = $this._services.Keybindings
-                $handled = $false
-
-                Write-Log -Level Debug -Message "Dashboard handling input: $($Key.Key)"
-
-                # Handle navigation keys
-                if ($keybindingSvc.IsAction('nav.down', $Key)) {
-                    $this._SetFocusToButton(1)
-                    $handled = $true
-                } elseif ($keybindingSvc.IsAction('nav.up', $Key)) {
-                    $this._SetFocusToButton(-1)
-                    $handled = $true
-                } elseif ($keybindingSvc.IsAction('form.submit', $Key)) {
-                    if ($this._focusedButtonIndex -ge 0 -and $this._focusedButtonIndex -lt $this._menuButtons.Count) {
-                        $focusedButton = $this._menuButtons[$this._focusedButtonIndex]
-                        if ($focusedButton -and $focusedButton.OnClick) {
-                            $focusedButton.OnClick()
-                            $handled = $true
-                        }
-                    }
-                } elseif ($Key.Character -match '^[0-9]$') {
-                    $numericInput = [int]$Key.Character.ToString()
-                    $targetButton = $null
-
-                    foreach ($button in $this._menuButtons) {
-                        if ($button.IsFocusable -and $button.Text -like "$numericInput.*") {
-                            $targetButton = $button
-                            break
-                        }
-                    }
-
-                    if ($targetButton -and $targetButton.OnClick) {
-                        $targetButton.OnClick()
-                        $handled = $true
-                    }
-                }
-                
-                return $handled
-            }
-        }
-        $screen | Add-Member -MemberType ScriptMethod -Name HandleInput -Value $handleInputScript
-
-        $renderScript = {
-            Invoke-WithErrorHandling -Component "$($this.Name).Render" -Context @{} -ScriptBlock {
-                if ($this._rootPanel -and ($this._rootPanel.PSObject.ScriptMethods.Name -contains 'Render')) {
-                    $this._rootPanel.Render()
-                } else {
-                    Write-Log -Level Warning -Message "Dashboard Render: Root panel not found or missing Render method."
-                }
-            }
-        }
-        $screen | Add-Member -MemberType ScriptMethod -Name Render -Value $renderScript
-
-        # CRITICAL: Build UI immediately and expose RootPanel
-        $screen._BuildUI()
-        
-        # Verify UI was built correctly
-        if (-not $screen._rootPanel) {
-            throw "Dashboard screen UI failed to build - no root panel created"
-        }
-        
-        if ($screen._menuButtons.Count -eq 0) {
-            throw "Dashboard screen UI failed to build - no menu buttons created"
-        }
-        
-        Write-Log -Level Debug -Message "Dashboard UI built, exposing RootPanel property"
-        
-        # Add RootPanel as a property for external access
-        $screen.PSObject.Properties.Add([psnoteproperty]::new('RootPanel', $screen._rootPanel))
-        
-        # CRITICAL: Validate that components are properly structured for focus manager
-        $focusableComponentCount = 0
-        foreach ($button in $screen._menuButtons) {
-            if (($button.PSObject.Properties.Name -contains 'IsFocusable') -and $button.IsFocusable -and 
-                ($button.PSObject.Properties.Name -contains 'Visible') -and $button.Visible) {
-                $focusableComponentCount++
-            }
-        }
-        
-        Write-Log -Level Info -Message "Dashboard screen created with $focusableComponentCount focusable components"
-        
-        if ($focusableComponentCount -eq 0) {
-            Write-Log -Level Error -Message "CRITICAL: Dashboard screen has no focusable components!"
-        }
-
-        return $screen
+    
+    Write-Log "Creating Ultra Simple Dashboard" -Level Info
+    
+    $dashboard = [PSCustomObject]@{
+        Name = "UltraSimpleDashboard"
+        Services = $Services
+        RootPanel = $null
     }
+    
+    # Add BuildUI method
+    $dashboard | Add-Member -MemberType ScriptMethod -Name BuildUI -Value {
+        Write-Log "Building Ultra Simple UI" -Level Info
+        
+        # Create root panel with a Render method that directly writes to buffer
+        $this.RootPanel = [PSCustomObject]@{
+            Name = "SimpleRoot"
+            Type = "Panel"
+            X = 0
+            Y = 0
+            Visible = $true
+            Children = @()
+        }
+        
+        # Add render method to root that directly draws
+        $this.RootPanel | Add-Member -MemberType ScriptMethod -Name Render -Value {
+            Write-Log "Root panel rendering - writing directly to buffer" -Level Info
+            
+            # Direct buffer writes - bypass component system
+            Write-BufferString -X 10 -Y 5 -Text "*** PMC TERMINAL V5 ***" -ForegroundColor ([ConsoleColor]::Cyan)
+            Write-BufferString -X 10 -Y 7 -Text "If you see this, rendering works!" -ForegroundColor ([ConsoleColor]::Green)
+            Write-BufferBox -X 5 -Y 10 -Width 50 -Height 10 -BorderStyle "Double" -BorderColor ([ConsoleColor]::Yellow)
+            Write-BufferString -X 10 -Y 12 -Text "Menu Options:" -ForegroundColor ([ConsoleColor]::White)
+            Write-BufferString -X 10 -Y 14 -Text "1. Tasks" -ForegroundColor ([ConsoleColor]::White)
+            Write-BufferString -X 10 -Y 15 -Text "2. Exit" -ForegroundColor ([ConsoleColor]::White)
+            Write-BufferString -X 10 -Y 22 -Text "Press ESC to exit" -ForegroundColor ([ConsoleColor]::DarkGray)
+            
+            # Force dirty flag
+            $global:TuiState.IsDirty = $true
+        }
+        
+        Write-Log "Ultra Simple UI built" -Level Info
+    }
+    
+    # Add simple input handler
+    $dashboard | Add-Member -MemberType ScriptMethod -Name HandleInput -Value {
+        param($KeyInfo)
+        
+        if ($KeyInfo.Key -eq [ConsoleKey]::Escape) {
+            Write-Log "Escape pressed - exiting" -Level Info
+            $global:TuiState.Running = $false
+            return "Quit"
+        }
+        
+        return $false
+    }
+    
+    # Build the UI
+    $dashboard.BuildUI()
+    
+    # Debug: Check if render method exists
+    Write-Log "RootPanel has Render method: $($dashboard.RootPanel.PSObject.Methods.Name -contains 'Render')" -Level Info
+    Write-Log "RootPanel ScriptMethods: $($dashboard.RootPanel.PSObject.ScriptMethods.Name -join ', ')" -Level Info
+    
+    return $dashboard
 }
 
-Export-ModuleMember -Function Get-HeliosDashboardScreen
+# Factory function
+function Get-HeliosDashboardScreen {
+    param(
+        [Parameter(Mandatory)]
+        [PSCustomObject]$Services
+    )
+    
+    return New-UltraSimpleDashboard -Services $Services
+}
+
+Export-ModuleMember -Function New-UltraSimpleDashboard, Get-HeliosDashboardScreen
 
 
 
@@ -5077,1055 +4719,10 @@ function Initialize-TaskService {
 Export-ModuleMember -Function 'Initialize-TaskService'
 
 
-####\tests\apply-fix-and-run.ps1
-# Apply the render fix and start PMC Terminal
-$ErrorActionPreference = "Stop"
-$script:BasePath = Split-Path -Parent $MyInvocation.MyCommand.Path
-
-Write-Host "PMC Terminal - Applying Render Fix" -ForegroundColor Cyan
-Write-Host "==================================" -ForegroundColor Cyan
-Write-Host ""
-
-# Backup original file
-$originalFile = "$BasePath\modules\tui-engine.psm1"
-$backupFile = "$BasePath\modules\tui-engine.psm1.bak"
-$fixedFile = "$BasePath\modules\tui-engine-fixed.psm1"
-
-if (Test-Path $fixedFile) {
-    Write-Host "Creating backup of original tui-engine.psm1..." -ForegroundColor Yellow
-    Copy-Item -Path $originalFile -Destination $backupFile -Force
-    
-    Write-Host "Applying fixed version..." -ForegroundColor Yellow
-    Copy-Item -Path $fixedFile -Destination $originalFile -Force
-    
-    Write-Host "Fix applied successfully!" -ForegroundColor Green
-    Write-Host ""
-    
-    Write-Host "Starting PMC Terminal with the fix..." -ForegroundColor Cyan
-    Write-Host ""
-    
-    # Start the application
-    & "$BasePath\Start-PMCTerminal.ps1"
-} else {
-    Write-Host "Fixed file not found at: $fixedFile" -ForegroundColor Red
-    Write-Host "Please ensure tui-engine-fixed.psm1 exists." -ForegroundColor Red
-}
-
-
-
-####\tests\FIX-ALL-ISSUES.ps1
-#!/usr/bin/env pwsh
-# PMC Terminal v5 - Comprehensive Fix Script
-# This script applies all necessary fixes for the black screen and non-responsive button issues
-
-param(
-    [switch]$TestOnly,
-    [switch]$Verbose
-)
-
-$ErrorActionPreference = "Stop"
-$script:BasePath = Split-Path -Parent $MyInvocation.MyCommand.Path
-
-Write-Host "`nPMC Terminal v5 - Comprehensive Fix" -ForegroundColor Cyan
-Write-Host "===================================" -ForegroundColor Cyan
-Write-Host ""
-
-function Write-Status {
-    param($Message, $Status = "Info", $Indent = 0)
-    $prefix = " " * $Indent
-    switch ($Status) {
-        "Success" { Write-Host "$prefix✓ $Message" -ForegroundColor Green }
-        "Error" { Write-Host "$prefix✗ $Message" -ForegroundColor Red }
-        "Warning" { Write-Host "$prefix⚠ $Message" -ForegroundColor Yellow }
-        "Info" { Write-Host "$prefix$Message" -ForegroundColor Gray }
-        "Action" { Write-Host "$prefix→ $Message" -ForegroundColor Cyan }
-    }
-}
-
-# Step 1: Verify required files exist
-Write-Status "Checking required files..." "Action"
-$requiredFiles = @(
-    "modules\tui-engine.psm1",
-    "modules\exceptions.psm1",
-    "modules\logger.psm1",
-    "ui\helios-components.psm1",
-    "ui\helios-panels.psm1",
-    "Start-PMCTerminal.ps1"
-)
-
-$allFilesExist = $true
-foreach ($file in $requiredFiles) {
-    $fullPath = Join-Path $script:BasePath $file
-    if (Test-Path $fullPath) {
-        Write-Status "$file" "Success" 2
-    } else {
-        Write-Status "$file - NOT FOUND" "Error" 2
-        $allFilesExist = $false
-    }
-}
-
-if (-not $allFilesExist) {
-    Write-Status "Missing required files. Cannot continue." "Error"
-    exit 1
-}
-
-# Step 2: Apply the fixed TUI engine
-Write-Status "`nApplying TUI engine fix..." "Action"
-
-if (Test-Path "$script:BasePath\modules\tui-engine-fixed.psm1") {
-    # Backup original
-    Copy-Item "$script:BasePath\modules\tui-engine.psm1" "$script:BasePath\modules\tui-engine.psm1.original" -Force
-    Copy-Item "$script:BasePath\modules\tui-engine-fixed.psm1" "$script:BasePath\modules\tui-engine.psm1" -Force
-    Write-Status "TUI engine fix applied" "Success" 2
-} else {
-    Write-Status "Fixed TUI engine not found. Fix will be limited." "Warning" 2
-}
-
-# Step 3: Run diagnostics if requested
-if ($TestOnly) {
-    Write-Status "`nRunning diagnostics..." "Action"
-    
-    # Load modules
-    Import-Module "$script:BasePath\modules\exceptions.psm1" -Force
-    Import-Module "$script:BasePath\modules\logger.psm1" -Force
-    Initialize-Logger
-    Import-Module "$script:BasePath\modules\theme-support.psm1" -Force
-    Import-Module "$script:BasePath\modules\tui-engine.psm1" -Force
-    Import-Module "$script:BasePath\ui\helios-panels.psm1" -Force
-    Import-Module "$script:BasePath\ui\helios-components.psm1" -Force
-    
-    # Test 1: Component creation
-    Write-Status "Testing component creation..." "Info" 2
-    try {
-        $panel = New-HeliosStackPanel -Props @{ Name = "Test"; Visible = $true }
-        $button = New-HeliosButton -Props @{ Name = "TestBtn"; Text = "Test" }
-        Write-Status "Components created successfully" "Success" 4
-    } catch {
-        Write-Status "Component creation failed: $_" "Error" 4
-    }
-    
-    # Test 2: Render pipeline
-    Write-Status "Testing render pipeline..." "Info" 2
-    try {
-        Initialize-TuiEngine -Width 80 -Height 24
-        Clear-BackBuffer
-        Write-BufferString -X 10 -Y 5 -Text "RENDER TEST" -ForegroundColor Green
-        Render-BufferOptimized
-        Write-Status "Render pipeline working" "Success" 4
-    } catch {
-        Write-Status "Render pipeline failed: $_" "Error" 4
-    }
-    
-    # Test 3: Button clicks
-    Write-Status "Testing button input..." "Info" 2
-    $clickWorked = $false
-    $testButton = New-HeliosButton -Props @{
-        OnClick = { $script:clickWorked = $true }
-    }
-    $enterKey = [System.ConsoleKeyInfo]::new([char]13, [ConsoleKey]::Enter, $false, $false, $false)
-    $testButton.HandleInput($enterKey) | Out-Null
-    if ($clickWorked) {
-        Write-Status "Button clicks working" "Success" 4
-    } else {
-        Write-Status "Button clicks not working" "Error" 4
-    }
-    
-    Write-Status "`nDiagnostics complete!" "Success"
-    exit 0
-}
-
-# Step 4: Start the application
-Write-Status "`nStarting PMC Terminal..." "Action"
-
-# Check console size
-$width = [Console]::WindowWidth
-$height = [Console]::WindowHeight
-Write-Status "Console size: ${width}x${height}" "Info" 2
-
-if ($width -lt 80 -or $height -lt 24) {
-    Write-Status "Console too small! Minimum 80x24 required." "Error"
-    Write-Status "Please resize your terminal window." "Warning"
-    exit 1
-}
-
-# Add verbose flag if requested
-$args = @()
-if ($Verbose) {
-    $args += "-Verbose"
-}
-
-# Clear screen for clean start
-Clear-Host
-
-# Start the application
-try {
-    & "$script:BasePath\Start-PMCTerminal.ps1" @args
-} catch {
-    Write-Status "`nApplication crashed!" "Error"
-    Write-Status "Error: $_" "Error" 2
-    Write-Status "Check log at: $(Join-Path $env:TEMP 'PMCTerminal\*.log')" "Info" 2
-}
-
-Write-Host ""
-
-
-
-####\tests\fix-summary.ps1
-# COMPLETE FIX SUMMARY FOR PMC TERMINAL FOCUS ISSUES
-# This script summarizes all the critical fixes applied to resolve black screen and button issues
-
-Write-Host "=== PMC TERMINAL FOCUS MANAGEMENT - COMPLETE FIX SUMMARY ===" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "PROBLEM IDENTIFIED:" -ForegroundColor Red
-Write-Host "Your log showed a critical error: 'The term Update-TabOrderAndFocus is not recognized'" -ForegroundColor Yellow
-Write-Host "This was causing the focus manager to fail completely, resulting in:" -ForegroundColor Yellow
-Write-Host "  - Black screen with no visible content" -ForegroundColor Yellow  
-Write-Host "  - Non-responsive buttons" -ForegroundColor Yellow
-Write-Host "  - Focus system failure" -ForegroundColor Yellow
-Write-Host ""
-
-Write-Host "ROOT CAUSE ANALYSIS:" -ForegroundColor Red
-Write-Host "1. PowerShell Module Scoping Issue: Event handlers couldn't access private functions" -ForegroundColor Yellow
-Write-Host "2. Missing Function Export: Update-TabOrderAndFocus wasn't exported from the module" -ForegroundColor Yellow
-Write-Host "3. Variable Scoping: Focus manager state wasn't properly scoped with `$script:" -ForegroundColor Yellow
-Write-Host "4. Event Handler Execution Context: Event scriptblocks run in different scope" -ForegroundColor Yellow
-Write-Host ""
-
-Write-Host "FIXES APPLIED:" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "1. FOCUS MANAGER MODULE (modules/focus-manager.psm1):" -ForegroundColor Cyan
-Write-Host "   ✓ Made Update-TabOrderAndFocus a PUBLIC function (exported)" -ForegroundColor Green
-Write-Host "   ✓ Fixed all variable scoping to use `$script: instead of `$FocusManager" -ForegroundColor Green  
-Write-Host "   ✓ Simplified event handler to avoid scoping issues" -ForegroundColor Green
-Write-Host "   ✓ Added proper error handling in event handler" -ForegroundColor Green
-Write-Host "   ✓ Enhanced component discovery with multiple fallback methods" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "2. DASHBOARD SCREEN (screens/dashboard-screen.psm1):" -ForegroundColor Cyan
-Write-Host "   ✓ Ensured all buttons have required properties (IsFocusable, Visible, IsFocused)" -ForegroundColor Green
-Write-Host "   ✓ Added proper component validation after UI construction" -ForegroundColor Green
-Write-Host "   ✓ Enhanced OnEnter method with multiple focus establishment strategies" -ForegroundColor Green
-Write-Host "   ✓ Added comprehensive debugging and logging" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "3. TUI ENGINE (modules/tui-engine.psm1):" -ForegroundColor Cyan  
-Write-Host "   ✓ Enhanced event firing with multiple methods (EventArguments + MessageData)" -ForegroundColor Green
-Write-Host "   ✓ Added fallback event identifiers for robustness" -ForegroundColor Green
-Write-Host "   ✓ Improved error handling for event firing" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "4. NEW TEST SCRIPT (test-focus-fixes.ps1):" -ForegroundColor Cyan
-Write-Host "   ✓ Comprehensive validation of all components" -ForegroundColor Green
-Write-Host "   ✓ Tests button properties and focus establishment" -ForegroundColor Green
-Write-Host "   ✓ Validates event firing and component discovery" -ForegroundColor Green
-Write-Host "   ✓ Tests tab navigation and rendering" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "TECHNICAL DETAILS:" -ForegroundColor Magenta
-Write-Host ""
-Write-Host "The core issue was PowerShell's module scoping rules. When you define a function" -ForegroundColor White
-Write-Host "inside a module as 'private' (not exported), it can't be called from event handler" -ForegroundColor White  
-Write-Host "scriptblocks because they execute in a different scope context." -ForegroundColor White
-Write-Host ""
-Write-Host "The fix involved:" -ForegroundColor White
-Write-Host "1. Moving Update-TabOrderAndFocus from private to public (exported)" -ForegroundColor White
-Write-Host "2. Using `$script: scope for all state variables" -ForegroundColor White
-Write-Host "3. Simplifying the event handler to use direct function calls" -ForegroundColor White
-Write-Host "4. Adding comprehensive fallback mechanisms" -ForegroundColor White
-Write-Host ""
-
-Write-Host "NEXT STEPS:" -ForegroundColor Green
-Write-Host ""
-Write-Host "1. Run the test script to validate fixes:" -ForegroundColor Yellow
-Write-Host "   ./test-focus-fixes.ps1" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "2. If tests pass, run the main application:" -ForegroundColor Yellow  
-Write-Host "   ./Start-PMCTerminal.ps1" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "3. You should now see:" -ForegroundColor Yellow
-Write-Host "   ✓ Visible dashboard with menu buttons" -ForegroundColor Green
-Write-Host "   ✓ One button highlighted/focused (usually 'View Tasks')" -ForegroundColor Green
-Write-Host "   ✓ Tab key navigation between buttons" -ForegroundColor Green
-Write-Host "   ✓ Enter key activates focused button" -ForegroundColor Green
-Write-Host "   ✓ Number keys (1, 0) directly activate corresponding menu items" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "EXPECTED BEHAVIOR:" -ForegroundColor Green
-Write-Host "- Dashboard loads with visible menu" -ForegroundColor Yellow
-Write-Host "- First focusable button (View Tasks) should be highlighted" -ForegroundColor Yellow
-Write-Host "- Tab moves focus to Exit button, then back to View Tasks" -ForegroundColor Yellow
-Write-Host "- Enter activates the focused button" -ForegroundColor Yellow
-Write-Host "- Number keys work as shortcuts" -ForegroundColor Yellow
-Write-Host "- No more black screen or 'Update-TabOrderAndFocus' errors" -ForegroundColor Yellow
-Write-Host ""
-
-Write-Host "If you still experience issues, check the log file for new error patterns." -ForegroundColor Cyan
-Write-Host "The previous error should be completely resolved." -ForegroundColor Green
-Write-Host ""
-
-# Run the test automatically
-Write-Host "Running automatic test..." -ForegroundColor Yellow
-Write-Host ""
-
-$testResult = & ".\test-focus-fixes.ps1"
-
-if ($testResult) {
-    Write-Host ""
-    Write-Host "🎉 ALL FIXES VERIFIED - YOUR APPLICATION SHOULD NOW WORK! 🎉" -ForegroundColor Green
-    Write-Host ""
-} else {
-    Write-Host ""
-    Write-Host "❌ SOME TESTS FAILED - PLEASE CHECK THE OUTPUT ABOVE" -ForegroundColor Red
-    Write-Host ""
-}
-
-
-
-####\tests\quick-diagnostic.ps1
-# Quick diagnostic script to test what's happening
-$ErrorActionPreference = "Stop"
-$script:BasePath = Split-Path -Parent $MyInvocation.MyCommand.Path
-
-Write-Host "`nPMC Terminal - Quick Diagnostic Test" -ForegroundColor Cyan
-Write-Host "====================================" -ForegroundColor Cyan
-Write-Host ""
-
-# Load minimal modules
-Import-Module "$BasePath\modules\exceptions.psm1" -Force -Global
-Import-Module "$BasePath\modules\logger.psm1" -Force -Global
-Initialize-Logger
-
-Write-Host "Testing component creation..." -ForegroundColor Yellow
-
-# Test 1: Can we create UI components?
-try {
-    Import-Module "$BasePath\modules\theme-support.psm1" -Force -Global
-    Import-Module "$BasePath\modules\tui-engine.psm1" -Force -Global
-    Import-Module "$BasePath\ui\helios-panels.psm1" -Force -Global
-    Import-Module "$BasePath\ui\helios-components.psm1" -Force -Global
-    
-    $testPanel = New-HeliosStackPanel -Props @{
-        Name = "TestPanel"
-        X = 10
-        Y = 5
-        Width = 60
-        Height = 15
-        Visible = $true
-        ShowBorder = $true
-    }
-    
-    Write-Host "✓ Panel created successfully" -ForegroundColor Green
-    Write-Host "  Panel Name: $($testPanel.Name)" -ForegroundColor Gray
-    Write-Host "  Position: X=$($testPanel.X), Y=$($testPanel.Y)" -ForegroundColor Gray
-    Write-Host "  Size: $($testPanel.Width)x$($testPanel.Height)" -ForegroundColor Gray
-    Write-Host "  Has Render method: $(if ($testPanel.PSObject.ScriptMethods['Render']) { 'Yes' } else { 'No' })" -ForegroundColor Gray
-    
-} catch {
-    Write-Host "✗ Failed to create panel: $_" -ForegroundColor Red
-}
-
-# Test 2: Check TUI state
-Write-Host "`nChecking TUI state..." -ForegroundColor Yellow
-if ($global:TuiState) {
-    Write-Host "✓ TUI state exists" -ForegroundColor Green
-    Write-Host "  Buffer size: $($global:TuiState.BufferWidth)x$($global:TuiState.BufferHeight)" -ForegroundColor Gray
-    Write-Host "  Current screen: $(if ($global:TuiState.CurrentScreen) { $global:TuiState.CurrentScreen.Name } else { 'None' })" -ForegroundColor Gray
-} else {
-    Write-Host "✗ TUI state not found" -ForegroundColor Red
-}
-
-# Test 3: Check if Write-BufferString exists
-Write-Host "`nChecking buffer functions..." -ForegroundColor Yellow
-$bufferFuncs = @('Write-BufferString', 'Write-BufferBox', 'Clear-BackBuffer', 'Render-Frame')
-foreach ($func in $bufferFuncs) {
-    if (Get-Command $func -ErrorAction SilentlyContinue) {
-        Write-Host "✓ $func exists" -ForegroundColor Green
-    } else {
-        Write-Host "✗ $func not found" -ForegroundColor Red
-    }
-}
-
-# Test 4: Try a minimal render
-Write-Host "`nTesting minimal render..." -ForegroundColor Yellow
-try {
-    Initialize-TuiEngine -Width 80 -Height 24
-    Clear-BackBuffer
-    Write-BufferString -X 10 -Y 5 -Text "TEST RENDER" -ForegroundColor ([ConsoleColor]::Green)
-    Write-BufferBox -X 5 -Y 3 -Width 30 -Height 5 -BorderColor ([ConsoleColor]::Cyan)
-    
-    Write-Host "✓ Buffer operations successful" -ForegroundColor Green
-    Write-Host "  Attempting to render to screen..." -ForegroundColor Gray
-    
-    # Try to render
-    Render-BufferOptimized
-    
-    Write-Host "✓ Render completed" -ForegroundColor Green
-    
-} catch {
-    Write-Host "✗ Render test failed: $_" -ForegroundColor Red
-    Write-Host "Stack trace:" -ForegroundColor Red
-    Write-Host $_.ScriptStackTrace -ForegroundColor Gray
-}
-
-Write-Host "`nDiagnostic complete. Check the log file for details." -ForegroundColor Cyan
-Write-Host "Log location: $(Get-LogPath)" -ForegroundColor Gray
-
-
-
-####\tests\test-button-click.ps1
-# Minimal test to verify button clicks work
-$ErrorActionPreference = "Stop"
-$script:BasePath = Split-Path -Parent $MyInvocation.MyCommand.Path
-
-Write-Host "`nButton Click Test" -ForegroundColor Cyan
-Write-Host "=================" -ForegroundColor Cyan
-
-# Load modules
-Import-Module "$BasePath\modules\exceptions.psm1" -Force
-Import-Module "$BasePath\modules\logger.psm1" -Force
-Initialize-Logger
-Import-Module "$BasePath\ui\helios-components.psm1" -Force
-
-Write-Host "`nCreating test button..." -ForegroundColor Yellow
-
-# Create a simple button
-$testButton = New-HeliosButton -Props @{
-    Name = "TestButton"
-    Text = "Click Me"
-    IsFocusable = $true
-    OnClick = {
-        Write-Host "BUTTON CLICKED! OnClick handler executed!" -ForegroundColor Green -BackgroundColor DarkGreen
-    }
-}
-
-Write-Host "Button created: $($testButton.Name)" -ForegroundColor Green
-Write-Host "OnClick defined: $(if ($testButton.OnClick) { 'Yes' } else { 'No' })" -ForegroundColor Gray
-
-# Test the OnClick directly
-Write-Host "`nTesting OnClick directly..." -ForegroundColor Yellow
-try {
-    if ($testButton.OnClick) {
-        & $testButton.OnClick
-        Write-Host "✓ Direct OnClick call successful" -ForegroundColor Green
-    } else {
-        Write-Host "✗ OnClick is null!" -ForegroundColor Red
-    }
-} catch {
-    Write-Host "✗ OnClick execution failed: $_" -ForegroundColor Red
-}
-
-# Test HandleInput with Enter key
-Write-Host "`nTesting HandleInput with Enter key..." -ForegroundColor Yellow
-try {
-    $enterKey = [System.ConsoleKeyInfo]::new([char]13, [ConsoleKey]::Enter, $false, $false, $false)
-    $handled = $testButton.HandleInput($enterKey)
-    Write-Host "HandleInput returned: $handled" -ForegroundColor Gray
-    if ($handled) {
-        Write-Host "✓ HandleInput processed Enter key" -ForegroundColor Green
-    } else {
-        Write-Host "✗ HandleInput did not process Enter key" -ForegroundColor Red
-    }
-} catch {
-    Write-Host "✗ HandleInput failed: $_" -ForegroundColor Red
-    Write-Host $_.ScriptStackTrace -ForegroundColor Gray
-}
-
-Write-Host "`nTest complete!" -ForegroundColor Cyan
-
-
-
-####\tests\test-focus-fixes.ps1
-# Test script to verify focus management fixes
-# Run this to test if the black screen and button issues are resolved
-
-param()
-
-Write-Host "Testing PMC Terminal Focus Management Fixes..." -ForegroundColor Green
-
-try {
-    # Change to the project directory
-    Set-Location "C:\Users\jhnhe\Documents\GitHub\_NEW_HELIOS"
-    
-    Write-Host "Current directory: $(Get-Location)" -ForegroundColor Yellow
-    
-    # Import required modules in correct order
-    Write-Host "Importing modules..." -ForegroundColor Yellow
-    
-    Import-Module ".\modules\logger.psm1" -Force
-    Import-Module ".\modules\exceptions.psm1" -Force  
-    Import-Module ".\modules\tui-engine.psm1" -Force
-    Import-Module ".\modules\focus-manager.psm1" -Force
-    Import-Module ".\services\navigation.psm1" -Force
-    Import-Module ".\services\keybindings.psm1" -Force
-    Import-Module ".\services\task-service.psm1" -Force
-    Import-Module ".\ui\helios-components.psm1" -Force
-    Import-Module ".\ui\helios-panels.psm1" -Force
-    Import-Module ".\screens\dashboard-screen.psm1" -Force
-    
-    Write-Host "All modules imported successfully" -ForegroundColor Green
-    
-    # Initialize services
-    Write-Host "Initializing services..." -ForegroundColor Yellow
-    
-    $taskService = Get-TaskService
-    $keybindingService = Get-KeybindingService
-    $navigationService = Get-NavigationService
-    
-    $services = [PSCustomObject]@{
-        Task = $taskService
-        Keybindings = $keybindingService  
-        Navigation = $navigationService
-    }
-    
-    Write-Host "Services initialized successfully" -ForegroundColor Green
-    
-    # Test dashboard screen creation
-    Write-Host "Testing dashboard screen creation..." -ForegroundColor Yellow
-    
-    $dashboardScreen = Get-HeliosDashboardScreen -Services $services
-    
-    if (-not $dashboardScreen) {
-        throw "Failed to create dashboard screen"
-    }
-    
-    if (-not $dashboardScreen.RootPanel) {
-        throw "Dashboard screen has no RootPanel"
-    }
-    
-    if ($dashboardScreen._menuButtons.Count -eq 0) {
-        throw "Dashboard screen has no menu buttons"
-    }
-    
-    Write-Host "Dashboard screen created successfully with $($dashboardScreen._menuButtons.Count) buttons" -ForegroundColor Green
-    
-    # Test button properties
-    Write-Host "Testing button properties..." -ForegroundColor Yellow
-    
-    $focusableButtons = 0
-    foreach ($button in $dashboardScreen._menuButtons) {
-        if (($button.PSObject.Properties.Name -notcontains 'IsFocusable')) {
-            throw "Button $($button.Name) missing IsFocusable property"
-        }
-        if (($button.PSObject.Properties.Name -notcontains 'Visible')) {
-            throw "Button $($button.Name) missing Visible property"
-        }
-        if (($button.PSObject.Properties.Name -notcontains 'IsFocused')) {
-            throw "Button $($button.Name) missing IsFocused property"
-        }
-        
-        if ($button.IsFocusable -and $button.Visible) {
-            $focusableButtons++
-        }
-    }
-    
-    if ($focusableButtons -eq 0) {
-        throw "No focusable buttons found"
-    }
-    
-    Write-Host "Button properties validated successfully - $focusableButtons focusable buttons" -ForegroundColor Green
-    
-    # Test focus manager
-    Write-Host "Testing focus manager..." -ForegroundColor Yellow
-    
-    Initialize-FocusManager
-    
-    # Test Update-TabOrderAndFocus function
-    try {
-        Update-TabOrderAndFocus -Screen $dashboardScreen
-        Write-Host "Update-TabOrderAndFocus function works correctly" -ForegroundColor Green
-    } catch {
-        throw "Update-TabOrderAndFocus failed: $_"
-    }
-    
-    # Check if focus was established
-    $focusedComponent = Get-FocusedComponent
-    if (-not $focusedComponent) {
-        Write-Host "Warning: No component is currently focused" -ForegroundColor Yellow
-    } else {
-        Write-Host "Focus established on: $($focusedComponent.Name)" -ForegroundColor Green
-    }
-    
-    # Test TUI engine initialization
-    Write-Host "Testing TUI engine initialization..." -ForegroundColor Yellow
-    
-    Initialize-TuiEngine -Width 80 -Height 25
-    
-    if (-not $global:TuiState.BufferWidth -or $global:TuiState.BufferWidth -eq 0) {
-        throw "TUI Engine failed to initialize"
-    }
-    
-    Write-Host "TUI Engine initialized successfully ($($global:TuiState.BufferWidth)x$($global:TuiState.BufferHeight))" -ForegroundColor Green
-    
-    # Test screen pushing with event firing
-    Write-Host "Testing screen push with event firing..." -ForegroundColor Yellow
-    
-    Push-Screen -Screen $dashboardScreen -Services $services
-    
-    if ($global:TuiState.CurrentScreen -ne $dashboardScreen) {
-        throw "Screen was not set as current screen"
-    }
-    
-    Write-Host "Screen pushed successfully" -ForegroundColor Green
-    
-    # Test focus after screen push
-    Start-Sleep -Milliseconds 200
-    $focusedAfterPush = Get-FocusedComponent
-    if (-not $focusedAfterPush) {
-        Write-Host "Warning: No component focused after screen push" -ForegroundColor Yellow
-        
-        # Try manual focus refresh
-        Force-RefreshFocus
-        Start-Sleep -Milliseconds 100
-        $focusedAfterRefresh = Get-FocusedComponent
-        
-        if ($focusedAfterRefresh) {
-            Write-Host "Focus established after manual refresh: $($focusedAfterRefresh.Name)" -ForegroundColor Green
-        } else {
-            Write-Host "Warning: Still no focus after manual refresh" -ForegroundColor Yellow
-        }
-    } else {
-        Write-Host "Focus maintained after screen push: $($focusedAfterPush.Name)" -ForegroundColor Green
-    }
-    
-    # Test tab navigation
-    Write-Host "Testing tab navigation..." -ForegroundColor Yellow
-    
-    $initialFocus = Get-FocusedComponent
-    Move-Focus
-    $afterTabFocus = Get-FocusedComponent
-    
-    if ($afterTabFocus -and $initialFocus -and ($afterTabFocus.Name -ne $initialFocus.Name)) {
-        Write-Host "Tab navigation works: $($initialFocus.Name) -> $($afterTabFocus.Name)" -ForegroundColor Green
-    } else {
-        Write-Host "Warning: Tab navigation may not be working properly" -ForegroundColor Yellow
-    }
-    
-    # Test rendering
-    Write-Host "Testing rendering..." -ForegroundColor Yellow
-    
-    try {
-        Render-Frame
-        Write-Host "Frame rendering works correctly" -ForegroundColor Green
-    } catch {
-        throw "Frame rendering failed: $_"
-    }
-    
-    Write-Host "`nAll tests completed successfully!" -ForegroundColor Green
-    Write-Host "The focus management system should now work properly." -ForegroundColor Green
-    Write-Host "`nYou can now run the main application with:" -ForegroundColor Cyan
-    Write-Host ".\Start-PMCTerminal.ps1" -ForegroundColor Cyan
-    
-    return $true
-    
-} catch {
-    Write-Host "`nTest failed: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
-    return $false
-} finally {
-    # Cleanup
-    if ($global:TuiState -and $global:TuiState.Running) {
-        Stop-TuiEngine
-    }
-    
-    try {
-        Cleanup-TuiEngine
-    } catch {
-        # Ignore cleanup errors
-    }
-}
-
-
-
-####\tests\test-render-fix.ps1
-# Test script to diagnose and fix rendering issues
-# Run this to test the fixed TUI engine
-
-$ErrorActionPreference = "Stop"
-Set-StrictMode -Version Latest
-
-# Get the directory where this script is located
-$script:BasePath = Split-Path -Parent $MyInvocation.MyCommand.Path
-
-Write-Host "PMC Terminal - Render Fix Test" -ForegroundColor Cyan
-Write-Host "==============================" -ForegroundColor Cyan
-Write-Host ""
-
-# Step 1: Load modules in correct order
-Write-Host "Loading modules..." -ForegroundColor Yellow
-
-try {
-    # Load core modules first
-    Import-Module "$BasePath\modules\exceptions.psm1" -Force -Global
-    Import-Module "$BasePath\modules\logger.psm1" -Force -Global
-    Initialize-Logger
-    
-    # Load theme support
-    Import-Module "$BasePath\modules\theme-support.psm1" -Force -Global
-    
-    # CRITICAL: Use the FIXED TUI engine
-    Write-Host "Loading FIXED TUI engine..." -ForegroundColor Green
-    Import-Module "$BasePath\modules\tui-engine-fixed.psm1" -Force -Global
-    
-    # Load UI components
-    Import-Module "$BasePath\ui\helios-panels.psm1" -Force -Global
-    Import-Module "$BasePath\ui\helios-components.psm1" -Force -Global
-    
-    Write-Host "Modules loaded successfully!" -ForegroundColor Green
-    Write-Host ""
-    
-} catch {
-    Write-Host "Failed to load modules: $_" -ForegroundColor Red
-    exit 1
-}
-
-# Step 2: Create a simple test screen
-Write-Host "Creating test screen..." -ForegroundColor Yellow
-
-$testScreen = [PSCustomObject]@{
-    Name = "TestScreen"
-    _rootPanel = $null
-}
-
-# Add Init method
-$testScreen | Add-Member -MemberType ScriptMethod -Name Init -Value {
-    param($Services)
-    Write-Host "Test screen initialized" -ForegroundColor Green
-}
-
-# Add OnEnter method
-$testScreen | Add-Member -MemberType ScriptMethod -Name OnEnter -Value {
-    Write-Host "Test screen entered" -ForegroundColor Green
-}
-
-# Add OnExit method
-$testScreen | Add-Member -MemberType ScriptMethod -Name OnExit -Value {
-    Write-Host "Test screen exited" -ForegroundColor Green
-}
-
-# Add HandleInput method
-$testScreen | Add-Member -MemberType ScriptMethod -Name HandleInput -Value {
-    param($Key)
-    if ($Key.Key -eq [ConsoleKey]::Escape -or $Key.Key -eq [ConsoleKey]::Q) {
-        Write-Host "`nExit key pressed" -ForegroundColor Yellow
-        Stop-TuiEngine
-        return $true
-    }
-    if ($Key.Key -eq [ConsoleKey]::Enter) {
-        Write-Host "`nEnter key pressed - Button would be clicked here" -ForegroundColor Cyan
-        Request-TuiRefresh
-        return $true
-    }
-    return $false
-}
-
-# Create the UI
-Write-Host "Building test UI..." -ForegroundColor Yellow
-
-# Create root panel
-$rootPanel = New-HeliosStackPanel -Props @{
-    Name = "TestRootPanel"
-    X = 5
-    Y = 2
-    Width = 70
-    Height = 20
-    ShowBorder = $true
-    BorderColor = "Accent"
-    Title = " Render Test Screen "
-    Orientation = "Vertical"
-    Spacing = 1
-    Padding = 2
-    Visible = $true
-}
-
-# Add a label
-$label = New-HeliosLabel -Props @{
-    Name = "TestLabel"
-    Text = "If you can see this, rendering is working!"
-    Width = 60
-    Height = 1
-    Visible = $true
-    ForegroundColor = [ConsoleColor]::Green
-}
-$rootPanel.AddChild($label)
-
-# Add some buttons
-$button1 = New-HeliosButton -Props @{
-    Name = "TestButton1"
-    Text = "Working Button (Press Enter)"
-    Width = 30
-    Height = 3
-    Visible = $true
-    IsFocusable = $true
-    OnClick = {
-        Write-Host "`nButton 1 clicked!" -ForegroundColor Green
-    }
-}
-$rootPanel.AddChild($button1)
-
-$button2 = New-HeliosButton -Props @{
-    Name = "TestButton2"
-    Text = "Another Button"
-    Width = 30
-    Height = 3
-    Visible = $true
-    IsFocusable = $true
-    OnClick = {
-        Write-Host "`nButton 2 clicked!" -ForegroundColor Green
-    }
-}
-$rootPanel.AddChild($button2)
-
-# Add status label
-$statusLabel = New-HeliosLabel -Props @{
-    Name = "StatusLabel"
-    Text = "Press ESC or Q to exit, Tab to switch buttons, Enter to click"
-    Width = 60
-    Height = 1
-    Visible = $true
-    ForegroundColor = [ConsoleColor]::DarkGray
-}
-$rootPanel.AddChild($statusLabel)
-
-# Attach root panel to screen
-$testScreen._rootPanel = $rootPanel
-$testScreen | Add-Member -MemberType NoteProperty -Name RootPanel -Value $rootPanel -Force
-
-Write-Host "Test UI built successfully!" -ForegroundColor Green
-Write-Host ""
-
-# Step 3: Initialize TUI and run
-Write-Host "Starting TUI engine..." -ForegroundColor Yellow
-Write-Host "Console size: $([Console]::WindowWidth)x$([Console]::WindowHeight)" -ForegroundColor Gray
-Write-Host ""
-
-try {
-    # Initialize TUI
-    Initialize-TuiEngine
-    
-    # Create minimal services object
-    $services = [PSCustomObject]@{}
-    
-    # Push the test screen
-    Push-Screen -Screen $testScreen -Services $services
-    
-    # Add a debug render to see immediate results
-    Write-Host "Forcing initial render..." -ForegroundColor Yellow
-    Request-TuiRefresh
-    Render-Frame
-    
-    Write-Host "`nStarting main loop..." -ForegroundColor Green
-    Write-Host "You should now see the UI. If the screen is black, rendering is still broken." -ForegroundColor Yellow
-    Write-Host ""
-    
-    # Start the main loop
-    Start-TuiLoop
-    
-} catch {
-    Write-Host "`nError during TUI operation: $_" -ForegroundColor Red
-    Write-Host "Stack trace:" -ForegroundColor Red
-    Write-Host $_.ScriptStackTrace -ForegroundColor Gray
-} finally {
-    Write-Host "`nCleaning up..." -ForegroundColor Yellow
-    Cleanup-TuiEngine
-    Write-Host "Test complete!" -ForegroundColor Green
-}
-
-
-
-####\tests\test.ps1
-# Test-ComponentStructure.ps1
-# Diagnostic script to test component creation and focus management
-
-param(
-    [switch]$Detailed
-)
-
-# Set up logging to see what's happening
-Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
-
-$basePath = Split-Path -Parent $MyInvocation.MyCommand.Path
-
-# Load core modules first
-Write-Host "Loading core modules..." -ForegroundColor Cyan
-Import-Module "$basePath\modules\exceptions.psm1" -Force -Global
-Import-Module "$basePath\modules\logger.psm1" -Force -Global
-Initialize-Logger
-
-# Load theme and UI modules
-Import-Module "$basePath\modules\theme-support.psm1" -Force -Global
-Import-Module "$basePath\ui\helios-panels.psm1" -Force -Global
-Import-Module "$basePath\ui\helios-components.psm1" -Force -Global
-
-Write-Host "Testing component creation..." -ForegroundColor Yellow
-
-# Test 1: Create a simple button
-Write-Host "`n=== Test 1: Basic Button Creation ===" -ForegroundColor Green
-$testButton = New-HeliosButton -Props @{
-    Name = "TestButton"
-    Text = "Test Button"
-    Width = 20
-    Height = 3
-    IsFocusable = $true
-    Visible = $true
-}
-
-Write-Host "Button created successfully!"
-Write-Host "  Name: $($testButton.Name)"
-Write-Host "  Type: $($testButton.Type)"
-Write-Host "  IsFocusable: $($testButton.IsFocusable)"
-Write-Host "  Visible: $($testButton.Visible)"
-Write-Host "  Has Render method: $(($testButton.PSObject.ScriptMethods.Name -contains 'Render'))"
-Write-Host "  Has HandleInput method: $(($testButton.PSObject.ScriptMethods.Name -contains 'HandleInput'))"
-
-# Test 2: Create a panel and add children
-Write-Host "`n=== Test 2: Panel with Children ===" -ForegroundColor Green
-$testPanel = New-HeliosStackPanel -Props @{
-    Name = "TestPanel"
-    Width = 50
-    Height = 20
-    Visible = $true
-    Orientation = "Vertical"
-    Spacing = 1
-}
-
-Write-Host "Panel created successfully!"
-Write-Host "  Name: $($testPanel.Name)"
-Write-Host "  Type: $($testPanel.Type)"
-Write-Host "  Children count (initial): $($testPanel.Children.Count)"
-
-# Add the button to the panel
-$testPanel.AddChild($testButton)
-Write-Host "  Children count (after adding button): $($testPanel.Children.Count)"
-
-if ($testPanel.Children.Count -gt 0) {
-    $child = $testPanel.Children[0]
-    Write-Host "  First child: $($child.Name), Type: $($child.Type)"
-    Write-Host "  First child IsFocusable: $($child.IsFocusable)"
-    Write-Host "  First child Visible: $($child.Visible)"
-} else {
-    Write-Host "  ERROR: No children found!" -ForegroundColor Red
-}
-
-# Test 3: Mock the focus manager component discovery
-Write-Host "`n=== Test 3: Focus Manager Component Discovery ===" -ForegroundColor Green
-
-function Test-FindFocusableComponents {
-    param($RootComponent)
-    
-    Write-Host "Starting component discovery from: $($RootComponent.Name)"
-    $focusable = @()
-    $queue = @($RootComponent)
-    $processed = 0
-
-    while ($queue.Count -gt 0) {
-        $current = $queue[0]
-        $queue = $queue[1..($queue.Count-1)]
-        $processed++
-
-        if (-not $current) { continue }
-
-        Write-Host "  Processing: $($current.Name), Type: $($current.Type)"
-        Write-Host "    Visible: $($current.Visible), IsFocusable: $($current.IsFocusable)"
-
-        if (($current.PSObject.Properties.Name -contains 'IsFocusable') -and $current.IsFocusable -and 
-            ($current.PSObject.Properties.Name -contains 'Visible') -and $current.Visible) {
-            $focusable += $current
-            Write-Host "    >>> FOCUSABLE COMPONENT FOUND! <<<" -ForegroundColor Green
-        }
-
-        if (($current.PSObject.Properties.Name -contains 'Children') -and $current.Children) {
-            Write-Host "    Has $($current.Children.Count) children"
-            foreach ($child in $current.Children) {
-                if ($child) {
-                    $queue += $child
-                }
-            }
-        }
-    }
-
-    Write-Host "Processed $processed components, found $($focusable.Count) focusable"
-    return $focusable
-}
-
-$focusableComponents = Test-FindFocusableComponents -RootComponent $testPanel
-Write-Host "Total focusable components found: $($focusableComponents.Count)"
-
-foreach ($comp in $focusableComponents) {
-    Write-Host "  - $($comp.Name) ($($comp.Type))"
-}
-
-# Test 4: Create multiple buttons like the dashboard does
-Write-Host "`n=== Test 4: Multiple Buttons (Dashboard Style) ===" -ForegroundColor Green
-
-$menuItems = @(
-    @{ Text = "1. Test Item 1"; Enabled = $true }
-    @{ Text = "2. Test Item 2"; Enabled = $true }
-    @{ Text = "3. Test Item 3"; Enabled = $false }
-)
-
-$multiPanel = New-HeliosStackPanel -Props @{
-    Name = "MultiButtonPanel"
-    Width = 60
-    Height = 30
-    Visible = $true
-    Orientation = "Vertical"
-    Spacing = 1
-}
-
-$buttons = @()
-foreach ($item in $menuItems) {
-    $button = New-HeliosButton -Props @{
-        Name = "Button_$($item.Text.Replace(' ','_').Replace('.',''))"
-        Text = $item.Text
-        Width = 50
-        Height = 3
-        IsFocusable = $item.Enabled
-        Visible = $true
-    }
-    
-    $multiPanel.AddChild($button)
-    $buttons += $button
-    
-    Write-Host "Created button: $($button.Name), IsFocusable: $($button.IsFocusable)"
-}
-
-Write-Host "Panel now has $($multiPanel.Children.Count) children"
-
-# Test the focus discovery on this panel
-$multiFocusable = Test-FindFocusableComponents -RootComponent $multiPanel
-Write-Host "Found $($multiFocusable.Count) focusable components in multi-button panel"
-
-if ($Detailed) {
-    Write-Host "`n=== Detailed Object Inspection ===" -ForegroundColor Yellow
-    
-    Write-Host "`nButton object structure:"
-    $testButton.PSObject.Properties | ForEach-Object {
-        Write-Host "  Property: $($_.Name) = $($_.Value)"
-    }
-    
-    Write-Host "`nButton methods:"
-    $testButton.PSObject.Methods | ForEach-Object {
-        Write-Host "  Method: $($_.Name)"
-    }
-    
-    Write-Host "`nPanel object structure:"
-    $testPanel.PSObject.Properties | ForEach-Object {
-        Write-Host "  Property: $($_.Name) = $($_.Value)"
-    }
-}
-
-Write-Host "`n=== Test Complete ===" -ForegroundColor Cyan
-Write-Host "If you see focusable components found above, the issue is likely in the focus manager timing or event handling."
-Write-Host "If no focusable components are found, there's an issue with component creation or the discovery algorithm."
-
-
 ####\ui\helios-components.psm1
 # Helios Component Library
 # Unified UI component library following PowerShell-first architecture
-# All components return PSCustomObject with methods attached via Add-Member
+# All components return PSCustomObject with methods attached via ScriptMethod
 
 #region Basic Components
 function New-HeliosLabel {
@@ -6203,23 +4800,32 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         if (-not $this.Visible) { return }
         
         # Determine colors based on button state
-        if (-not $this.IsFocusable) {
-            # Disabled button appearance
-            $borderColor = Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
-            $bgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
-            $fgColor = Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
+        $borderColor = if (-not $this.IsFocusable) {
+            Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
         } elseif ($this.IsPressed) {
-            $borderColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
-            $bgColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
-            $fgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+            Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
         } elseif ($this.IsFocused) {
-            $borderColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
-            $bgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
-            $fgColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+            Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
         } else {
-            $borderColor = Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
-            $bgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
-            $fgColor = Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
+            Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
+        }
+        
+        $bgColor = if (-not $this.IsFocusable) {
+            Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+        } elseif ($this.IsPressed) {
+            Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+        } else {
+            Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+        }
+
+        $fgColor = if (-not $this.IsFocusable) {
+            Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
+        } elseif ($this.IsPressed) {
+            Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+        } elseif ($this.IsFocused) {
+            Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+        } else {
+            Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
         }
         
         Write-BufferBox -X $this.X -Y $this.Y -Width $this.Width -Height $this.Height `
@@ -6387,7 +4993,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
                 }
             }
             default {
-                if ($Key.KeyChar -and -not [char]::IsControl($Key.KeyChar) -and $text.Length -lt $this.MaxLength) {
+                if ($Key.KeyChar -and -not [char]::IsControl($Key.KeyChar)) {
                     $text = $text.Insert($cursorPos, $Key.KeyChar)
                     $cursorPos++
                 } else { 
@@ -7067,7 +5673,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         # Truncate time string if too long
         $maxLength = $this.Width - 6
         if ($timeStr.Length -gt $maxLength) {
-            $timeStr = $timeStr.Substring(0, [Math]::Max(0, $maxLength)) # Fixed: Ensure substring length is non-negative
+            $timeStr = $timeStr.Substring(0, [Math]::Max(0, $maxLength))
         }
         
         Write-BufferString -X ($this.X + 2) -Y ($this.Y + 1) -Text $timeStr
@@ -7182,13 +5788,15 @@ $component | Add-Member -MemberType ScriptMethod -Name "ProcessData" -Value {
             $this.FilteredData = $this.Data
         } else {
             if ($this.FilterColumn) {
-                $this.FilteredData = @($this.Data | Where-Object { $_."$($this.FilterColumn)" -like "*$($this.FilterText)*"" })
+                # FIXED: Use string concatenation for -like pattern to avoid parsing error
+                $this.FilteredData = @($this.Data | Where-Object { $_."$($this.FilterColumn)" -like ("*" + $this.FilterText + "*") })
             } else {
                 $this.FilteredData = @($this.Data | Where-Object {
                     $row = $_
                     $matched = $false
                     foreach ($col in $this.Columns) {
-                        if ($col.Filterable -ne $false -and $row."$($col.Name)" -like "*$($this.FilterText)*") {
+                        # FIXED: Use string concatenation for -like pattern to avoid parsing error
+                        if ($col.Filterable -ne $false -and $row."$($col.Name)" -like ("*" + $this.FilterText + "*")) {
                             $matched = $true; break
                         }
                     }
@@ -7289,7 +5897,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         if ($null -eq $definedWidth) { $definedWidth = 0 }
         $flexCols = @($this.Columns | Where-Object { -not $_.Width })
         $rowNumWidth = if ($this.ShowRowNumbers) { 5 } else { 0 }
-        $remaining = $innerWidth - $definedWidth - $rowNumWidth - [Math]::Max(0, $this.Columns.Count - 1)
+        $remaining = [Math]::Max(0, $innerWidth - $definedWidth - $rowNumWidth - [Math]::Max(0, $this.Columns.Count - 1))
         $flexWidth = if ($flexCols.Count -gt 0) { 
             [Math]::Floor($remaining / $flexCols.Count) 
         } else { 
@@ -7615,8 +6223,8 @@ Export-ModuleMember -Function @(
 # PURPOSE: Provides a suite of declarative layout panels for UI construction,
 # refactored to use a PowerShell-idiomatic PSCustomObject model.
 
-# This version ensures all methods are explicitly added as ScriptMethod members
-# to avoid issues with PowerShell's method lookup on PSCustomObjects.
+# This version ensures all methods are explicitly defined as ScriptMethod members
+# for maximum reliability in PowerShell's object model.
 # Each panel type is now fully self-contained.
 
 #region Public Panel Factories
@@ -7694,7 +6302,8 @@ function New-HeliosStackPanel {
             if ($this.Visible) { return }
             $this.Visible = $true
             foreach ($child in $this.Children) {
-                if ($child.PSObject.Methods['Show']) { $child.Show() } else { $child.Visible = $true }
+                # Check for ScriptMethod explicitly
+                if ($child.PSObject.ScriptMethods.Name -contains 'Show') { $child.Show() } else { $child.Visible = $true }
             }
             $this.InvalidateLayout()
         } -Context @{ Panel = $this.Name }
@@ -7705,7 +6314,8 @@ function New-HeliosStackPanel {
             if (-not $this.Visible) { return }
             $this.Visible = $false
             foreach ($child in $this.Children) {
-                if ($child.PSObject.Methods['Hide']) { $child.Hide() } else { $child.Visible = $false }
+                # Check for ScriptMethod explicitly
+                if ($child.PSObject.ScriptMethods.Name -contains 'Hide') { $child.Hide() } else { $child.Visible = $false }
             }
             $this.InvalidateLayout()
         } -Context @{ Panel = $this.Name }
@@ -7735,7 +6345,8 @@ function New-HeliosStackPanel {
     $panel | Add-Member -MemberType ScriptMethod -Name "InvalidateLayout" -Value {
         Invoke-WithErrorHandling -Component "$($this.Name).InvalidateLayout" -ScriptBlock {
             $this._isDirty = $true
-            if ($this.Parent -and $this.Parent.PSObject.Methods['InvalidateLayout']) {
+            # Check for ScriptMethod explicitly
+            if ($this.Parent -and $this.Parent.PSObject.ScriptMethods.Name -contains 'InvalidateLayout') {
                 $this.Parent.InvalidateLayout()
             }
         } -Context @{ Panel = $this.Name }
@@ -7918,7 +6529,8 @@ function New-HeliosGridPanel {
             if ($this.Visible) { return }
             $this.Visible = $true
             foreach ($child in $this.Children) {
-                if ($child.PSObject.Methods['Show']) { $child.Show() } else { $child.Visible = $true }
+                # Check for ScriptMethod explicitly
+                if ($child.PSObject.ScriptMethods.Name -contains 'Show') { $child.Show() } else { $child.Visible = $true }
             }
             $this.InvalidateLayout()
         } -Context @{ Panel = $this.Name }
@@ -7929,7 +6541,8 @@ function New-HeliosGridPanel {
             if (-not $this.Visible) { return }
             $this.Visible = $false
             foreach ($child in $this.Children) {
-                if ($child.PSObject.Methods['Hide']) { $child.Hide() } else { $child.Visible = $false }
+                # Check for ScriptMethod explicitly
+                if ($child.PSObject.ScriptMethods.Name -contains 'Hide') { $child.Hide() } else { $child.Visible = $false }
             }
             $this.InvalidateLayout()
         } -Context @{ Panel = $this.Name }
@@ -7959,7 +6572,8 @@ function New-HeliosGridPanel {
     $panel | Add-Member -MemberType ScriptMethod -Name "InvalidateLayout" -Value {
         Invoke-WithErrorHandling -Component "$($this.Name).InvalidateLayout" -ScriptBlock {
             $this._isDirty = $true
-            if ($this.Parent -and $this.Parent.PSObject.Methods['InvalidateLayout']) {
+            # Check for ScriptMethod explicitly
+            if ($this.Parent -and $this.Parent.PSObject.ScriptMethods.Name -contains 'InvalidateLayout') {
                 $this.Parent.InvalidateLayout()
             }
         } -Context @{ Panel = $this.Name }

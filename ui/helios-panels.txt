@@ -2,8 +2,8 @@
 # PURPOSE: Provides a suite of declarative layout panels for UI construction,
 # refactored to use a PowerShell-idiomatic PSCustomObject model.
 
-# This version ensures all methods are explicitly added as ScriptMethod members
-# to avoid issues with PowerShell's method lookup on PSCustomObjects.
+# This version ensures all methods are explicitly defined as ScriptMethod members
+# for maximum reliability in PowerShell's object model.
 # Each panel type is now fully self-contained.
 
 #region Public Panel Factories
@@ -81,7 +81,8 @@ function New-HeliosStackPanel {
             if ($this.Visible) { return }
             $this.Visible = $true
             foreach ($child in $this.Children) {
-                if ($child.PSObject.Methods['Show']) { $child.Show() } else { $child.Visible = $true }
+                # Check for ScriptMethod explicitly
+                if ($child.PSObject.ScriptMethods.Name -contains 'Show') { $child.Show() } else { $child.Visible = $true }
             }
             $this.InvalidateLayout()
         } -Context @{ Panel = $this.Name }
@@ -92,7 +93,8 @@ function New-HeliosStackPanel {
             if (-not $this.Visible) { return }
             $this.Visible = $false
             foreach ($child in $this.Children) {
-                if ($child.PSObject.Methods['Hide']) { $child.Hide() } else { $child.Visible = $false }
+                # Check for ScriptMethod explicitly
+                if ($child.PSObject.ScriptMethods.Name -contains 'Hide') { $child.Hide() } else { $child.Visible = $false }
             }
             $this.InvalidateLayout()
         } -Context @{ Panel = $this.Name }
@@ -122,7 +124,8 @@ function New-HeliosStackPanel {
     $panel | Add-Member -MemberType ScriptMethod -Name "InvalidateLayout" -Value {
         Invoke-WithErrorHandling -Component "$($this.Name).InvalidateLayout" -ScriptBlock {
             $this._isDirty = $true
-            if ($this.Parent -and $this.Parent.PSObject.Methods['InvalidateLayout']) {
+            # Check for ScriptMethod explicitly
+            if ($this.Parent -and $this.Parent.PSObject.ScriptMethods.Name -contains 'InvalidateLayout') {
                 $this.Parent.InvalidateLayout()
             }
         } -Context @{ Panel = $this.Name }
@@ -305,7 +308,8 @@ function New-HeliosGridPanel {
             if ($this.Visible) { return }
             $this.Visible = $true
             foreach ($child in $this.Children) {
-                if ($child.PSObject.Methods['Show']) { $child.Show() } else { $child.Visible = $true }
+                # Check for ScriptMethod explicitly
+                if ($child.PSObject.ScriptMethods.Name -contains 'Show') { $child.Show() } else { $child.Visible = $true }
             }
             $this.InvalidateLayout()
         } -Context @{ Panel = $this.Name }
@@ -316,7 +320,8 @@ function New-HeliosGridPanel {
             if (-not $this.Visible) { return }
             $this.Visible = $false
             foreach ($child in $this.Children) {
-                if ($child.PSObject.Methods['Hide']) { $child.Hide() } else { $child.Visible = $false }
+                # Check for ScriptMethod explicitly
+                if ($child.PSObject.ScriptMethods.Name -contains 'Hide') { $child.Hide() } else { $child.Visible = $false }
             }
             $this.InvalidateLayout()
         } -Context @{ Panel = $this.Name }
@@ -346,7 +351,8 @@ function New-HeliosGridPanel {
     $panel | Add-Member -MemberType ScriptMethod -Name "InvalidateLayout" -Value {
         Invoke-WithErrorHandling -Component "$($this.Name).InvalidateLayout" -ScriptBlock {
             $this._isDirty = $true
-            if ($this.Parent -and $this.Parent.PSObject.Methods['InvalidateLayout']) {
+            # Check for ScriptMethod explicitly
+            if ($this.Parent -and $this.Parent.PSObject.ScriptMethods.Name -contains 'InvalidateLayout') {
                 $this.Parent.InvalidateLayout()
             }
         } -Context @{ Panel = $this.Name }

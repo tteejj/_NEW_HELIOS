@@ -1,6 +1,6 @@
 # Helios Component Library
 # Unified UI component library following PowerShell-first architecture
-# All components return PSCustomObject with methods attached via Add-Member
+# All components return PSCustomObject with methods attached via ScriptMethod
 
 #region Basic Components
 function New-HeliosLabel {
@@ -78,23 +78,32 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         if (-not $this.Visible) { return }
         
         # Determine colors based on button state
-        if (-not $this.IsFocusable) {
-            # Disabled button appearance
-            $borderColor = Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
-            $bgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
-            $fgColor = Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
+        $borderColor = if (-not $this.IsFocusable) {
+            Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
         } elseif ($this.IsPressed) {
-            $borderColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
-            $bgColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
-            $fgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+            Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
         } elseif ($this.IsFocused) {
-            $borderColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
-            $bgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
-            $fgColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+            Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
         } else {
-            $borderColor = Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
-            $bgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
-            $fgColor = Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
+            Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
+        }
+        
+        $bgColor = if (-not $this.IsFocusable) {
+            Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+        } elseif ($this.IsPressed) {
+            Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+        } else {
+            Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+        }
+
+        $fgColor = if (-not $this.IsFocusable) {
+            Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
+        } elseif ($this.IsPressed) {
+            Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+        } elseif ($this.IsFocused) {
+            Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+        } else {
+            Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
         }
         
         Write-BufferBox -X $this.X -Y $this.Y -Width $this.Width -Height $this.Height `
@@ -262,7 +271,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
                 }
             }
             default {
-                if ($Key.KeyChar -and -not [char]::IsControl($Key.KeyChar) -and $text.Length -lt $this.MaxLength) {
+                if ($Key.KeyChar -and -not [char]::IsControl($Key.KeyChar)) {
                     $text = $text.Insert($cursorPos, $Key.KeyChar)
                     $cursorPos++
                 } else { 
@@ -942,7 +951,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         # Truncate time string if too long
         $maxLength = $this.Width - 6
         if ($timeStr.Length -gt $maxLength) {
-            $timeStr = $timeStr.Substring(0, [Math]::Max(0, $maxLength)) # Fixed: Ensure substring length is non-negative
+            $timeStr = $timeStr.Substring(0, [Math]::Max(0, $maxLength))
         }
         
         Write-BufferString -X ($this.X + 2) -Y ($this.Y + 1) -Text $timeStr
@@ -1057,13 +1066,15 @@ $component | Add-Member -MemberType ScriptMethod -Name "ProcessData" -Value {
             $this.FilteredData = $this.Data
         } else {
             if ($this.FilterColumn) {
-                $this.FilteredData = @($this.Data | Where-Object { $_."$($this.FilterColumn)" -like "*$($this.FilterText)*"" })
+                # FIXED: Use string concatenation for -like pattern to avoid parsing error
+                $this.FilteredData = @($this.Data | Where-Object { $_."$($this.FilterColumn)" -like ("*" + $this.FilterText + "*") })
             } else {
                 $this.FilteredData = @($this.Data | Where-Object {
                     $row = $_
                     $matched = $false
                     foreach ($col in $this.Columns) {
-                        if ($col.Filterable -ne $false -and $row."$($col.Name)" -like "*$($this.FilterText)*") {
+                        # FIXED: Use string concatenation for -like pattern to avoid parsing error
+                        if ($col.Filterable -ne $false -and $row."$($col.Name)" -like ("*" + $this.FilterText + "*")) {
                             $matched = $true; break
                         }
                     }
@@ -1164,7 +1175,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         if ($null -eq $definedWidth) { $definedWidth = 0 }
         $flexCols = @($this.Columns | Where-Object { -not $_.Width })
         $rowNumWidth = if ($this.ShowRowNumbers) { 5 } else { 0 }
-        $remaining = $innerWidth - $definedWidth - $rowNumWidth - [Math]::Max(0, $this.Columns.Count - 1)
+        $remaining = [Math]::Max(0, $innerWidth - $definedWidth - $rowNumWidth - [Math]::Max(0, $this.Columns.Count - 1))
         $flexWidth = if ($flexCols.Count -gt 0) { 
             [Math]::Floor($remaining / $flexCols.Count) 
         } else { 
