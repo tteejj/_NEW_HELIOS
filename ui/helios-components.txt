@@ -3,7 +3,7 @@
 # All components return PSCustomObject with methods attached via Add-Member
 
 #region Basic Components
-function global:New-HeliosLabel {
+function New-HeliosLabel {
 param([hashtable]$Props = @{})
 # Create PSCustomObject
 $component = [PSCustomObject]@{
@@ -25,7 +25,7 @@ $component = [PSCustomObject]@{
     Name = $Props.Name
 }
 
-# Add Render method
+# Add methods using Add-Member for explicit ScriptMethod type
 $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).Render" -ScriptBlock {
@@ -36,7 +36,6 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     } -Context @{ Component = $this.Name }
 }
 
-# Add HandleInput method
 $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
     param($Key)
     return $false
@@ -44,13 +43,13 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
 
 return $component
 }
-function global:New-HeliosButton {
+function New-HeliosButton {
 param([hashtable]$Props = @{})
 # Create PSCustomObject
 $component = [PSCustomObject]@{
     # Metadata
     Type = "Button"
-    IsFocusable = $true
+    IsFocusable = if ($null -ne $Props.IsFocusable) { $Props.IsFocusable } else { $true }
     Parent = $null
     LayoutProps = @{}
     
@@ -72,26 +71,30 @@ $component = [PSCustomObject]@{
     OnClick = $Props.OnClick
 }
 
-# Add Render method
+# Add methods using Add-Member for explicit ScriptMethod type
 $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).Render" -ScriptBlock {
         if (-not $this.Visible) { return }
         
-        $borderColor = if ($this.IsFocused) { 
-            Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
-        } else { 
-            Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
-        }
-        $bgColor = if ($this.IsPressed) { 
-            Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
-        } else { 
-            Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
-        }
-        $fgColor = if ($this.IsPressed) { 
-            Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
-        } else { 
-            $borderColor 
+        # Determine colors based on button state
+        if (-not $this.IsFocusable) {
+            # Disabled button appearance
+            $borderColor = Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
+            $bgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+            $fgColor = Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
+        } elseif ($this.IsPressed) {
+            $borderColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+            $bgColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+            $fgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+        } elseif ($this.IsFocused) {
+            $borderColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+            $bgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+            $fgColor = Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+        } else {
+            $borderColor = Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
+            $bgColor = Get-ThemeColor "Background" -Default ([ConsoleColor]::Black)
+            $fgColor = Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
         }
         
         Write-BufferBox -X $this.X -Y $this.Y -Width $this.Width -Height $this.Height `
@@ -103,10 +106,14 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     } -Context @{ Component = $this.Name }
 }
 
-# Add HandleInput method
 $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
     param($Key)
     Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -ScriptBlock {
+        # Ignore input if button is disabled
+        if (-not $this.IsFocusable) {
+            return $false
+        }
+        
         if ($Key.Key -in @([ConsoleKey]::Enter, [ConsoleKey]::Spacebar)) {
             if ($this.OnClick) {
                 Invoke-WithErrorHandling -Component "$($this.Name).OnClick" -ScriptBlock {
@@ -122,7 +129,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
 
 return $component
 }
-function global:New-HeliosTextBox {
+function New-HeliosTextBox {
 param([hashtable]$Props = @{})
 # Create PSCustomObject
 $component = [PSCustomObject]@{
@@ -152,7 +159,7 @@ $component = [PSCustomObject]@{
     OnChange = $Props.OnChange
 }
 
-# Add Render method
+# Add methods using Add-Member for explicit ScriptMethod type
 $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).Render" -ScriptBlock {
@@ -172,7 +179,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         
         $maxDisplayLength = $this.Width - 4
         if ($displayText.Length -gt $maxDisplayLength) {
-            $displayText = $displayText.Substring(0, $maxDisplayLength)
+            $displayText = $displayText.Substring(0, [Math]::Max(0, $maxDisplayLength))
         }
         
         Write-BufferString -X ($this.X + 2) -Y ($this.Y + 1) -Text $displayText
@@ -185,7 +192,6 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     } -Context @{ Component = $this.Name }
 }
 
-# Add HandleInput method
 $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
     param($Key)
     Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -ScriptBlock {
@@ -247,7 +253,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
                     }
                 } else {
                     # Regular 'V' key
-                    if (-not [char]::IsControl($Key.KeyChar) -and $text.Length -lt $this.MaxLength) {
+                    if ($Key.KeyChar -and -not [char]::IsControl($Key.KeyChar) -and $text.Length -lt $this.MaxLength) {
                         $text = $text.Insert($cursorPos, $Key.KeyChar)
                         $cursorPos++
                     } else {
@@ -282,7 +288,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
 
 return $component
 }
-function global:New-HeliosCheckBox {
+function New-HeliosCheckBox {
 param([hashtable]$Props = @{})
 # Create PSCustomObject
 $component = [PSCustomObject]@{
@@ -310,7 +316,7 @@ $component = [PSCustomObject]@{
     OnChange = $Props.OnChange
 }
 
-# Add Render method
+# Add methods using Add-Member for explicit ScriptMethod type
 $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).Render" -ScriptBlock {
@@ -326,7 +332,6 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     } -Context @{ Component = $this.Name }
 }
 
-# Add HandleInput method
 $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
     param($Key)
     Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -ScriptBlock {
@@ -347,7 +352,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
 
 return $component
 }
-function global:New-HeliosProgressBar {
+function New-HeliosProgressBar {
 param([hashtable]$Props = @{})
 # Create PSCustomObject
 $component = [PSCustomObject]@{
@@ -370,7 +375,7 @@ $component = [PSCustomObject]@{
     Name = $Props.Name
 }
 
-# Add Render method
+# Add methods using Add-Member for explicit ScriptMethod type
 $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).Render" -ScriptBlock {
@@ -391,7 +396,6 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     } -Context @{ Component = $this.Name }
 }
 
-# Add HandleInput method
 $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
     param($Key)
     return $false
@@ -399,7 +403,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
 
 return $component
 }
-function global:New-HeliosTextArea {
+function New-HeliosTextArea {
 param([hashtable]$Props = @{})
 # Create PSCustomObject
 $component = [PSCustomObject]@{
@@ -432,7 +436,7 @@ $component = [PSCustomObject]@{
     OnChange = $Props.OnChange
 }
 
-# Add Render method
+# Add methods using Add-Member for explicit ScriptMethod type
 $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).Render" -ScriptBlock {
@@ -487,17 +491,16 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
             for ($i = 0; $i -lt $scrollbarHeight; $i++) {
                 $char = if ($i -eq $scrollPosition) { "█" } else { "│" }
                 $color = if ($i -eq $scrollPosition) { 
-                    Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
-                } else { 
-                    Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
-                }
+                        Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+                    } else { 
+                        Get-ThemeColor "Subtle" -Default ([ConsoleColor]::DarkGray)
+                    }
                 Write-BufferString -X ($this.X + $this.Width - 2) -Y ($this.Y + 1 + $i) -Text $char -ForegroundColor $color
             }
         }
     } -Context @{ Component = $this.Name }
 }
 
-# Add HandleInput method
 $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
     param($Key)
     Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -ScriptBlock {
@@ -648,7 +651,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
                     }
                 } else {
                     # Regular 'V' key
-                    if (-not [char]::IsControl($Key.KeyChar)) {
+                    if ($Key.KeyChar -and -not [char]::IsControl($Key.KeyChar)) {
                         $lines[$cursorY] = $lines[$cursorY].Insert($cursorX, $Key.KeyChar)
                         $cursorX++
                     } else {
@@ -685,7 +688,7 @@ return $component
 }
 #endregion
 #region DateTime Components
-function global:New-HeliosCalendarPicker {
+function New-HeliosCalendarPicker {
 param([hashtable]$Props = @{})
 # Create PSCustomObject
 $component = [PSCustomObject]@{
@@ -708,7 +711,7 @@ $component = [PSCustomObject]@{
     OnSelect = $Props.OnSelect
 }
 
-# Add Render method
+# Add methods using Add-Member for explicit ScriptMethod type
 $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).Render" -ScriptBlock {
@@ -802,7 +805,6 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     } -Context @{ Component = $this.Name }
 }
 
-# Add HandleInput method
 $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
     param($Key)
     Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -ScriptBlock {
@@ -889,7 +891,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
 
 return $component
 }
-function global:New-HeliosTimePicker {
+function New-HeliosTimePicker {
 param([hashtable]$Props = @{})
 # Create PSCustomObject
 $component = [PSCustomObject]@{
@@ -916,7 +918,7 @@ $component = [PSCustomObject]@{
     OnChange = $Props.OnChange
 }
 
-# Add Render method
+# Add methods using Add-Member for explicit ScriptMethod type
 $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).Render" -ScriptBlock {
@@ -940,7 +942,7 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
         # Truncate time string if too long
         $maxLength = $this.Width - 6
         if ($timeStr.Length -gt $maxLength) {
-            $timeStr = $timeStr.Substring(0, $maxLength)
+            $timeStr = $timeStr.Substring(0, [Math]::Max(0, $maxLength)) # Fixed: Ensure substring length is non-negative
         }
         
         Write-BufferString -X ($this.X + 2) -Y ($this.Y + 1) -Text $timeStr
@@ -950,7 +952,6 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     } -Context @{ Component = $this.Name }
 }
 
-# Add HandleInput method
 $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
     param($Key)
     Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -ScriptBlock {
@@ -991,7 +992,7 @@ return $component
 }
 #endregion
 #region Data Display Components
-function global:New-HeliosDataTable {
+function New-HeliosDataTable {
 param([hashtable]$Props = @{})
 # Create PSCustomObject
 $component = [PSCustomObject]@{
@@ -1047,8 +1048,8 @@ $component = [PSCustomObject]@{
     OnSelectionChange = $Props.OnSelectionChange
 }
 
-# Internal method to process data (filter, sort, paginate)
-$processDataScriptBlock = {
+# Add methods using Add-Member for explicit ScriptMethod type
+$component | Add-Member -MemberType ScriptMethod -Name "ProcessData" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).ProcessData" -ScriptBlock {
         # Filter data
@@ -1056,7 +1057,7 @@ $processDataScriptBlock = {
             $this.FilteredData = $this.Data
         } else {
             if ($this.FilterColumn) {
-                $this.FilteredData = @($this.Data | Where-Object { $_."$($this.FilterColumn)" -like "*$($this.FilterText)*" })
+                $this.FilteredData = @($this.Data | Where-Object { $_."$($this.FilterColumn)" -like "*$($this.FilterText)*"" })
             } else {
                 $this.FilteredData = @($this.Data | Where-Object {
                     $row = $_
@@ -1096,10 +1097,8 @@ $processDataScriptBlock = {
         }
     } -Context @{ Component = $this.Name }
 }
-$component | Add-Member -MemberType ScriptMethod -Name "ProcessData" -Value $processDataScriptBlock
 
-# Public method to update data and refresh
-$updateDataScriptBlock = {
+$component | Add-Member -MemberType ScriptMethod -Name "UpdateData" -Value {
     param([array]$NewData)
     Invoke-WithErrorHandling -Component "$($this.Name).UpdateData" -ScriptBlock {
         $this.Data = @($NewData)
@@ -1107,9 +1106,7 @@ $updateDataScriptBlock = {
         Request-TuiRefresh
     } -Context @{ Component = $this.Name }
 }
-$component | Add-Member -MemberType ScriptMethod -Name "UpdateData" -Value $updateDataScriptBlock
 
-# Add Render method
 $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     param()
     Invoke-WithErrorHandling -Component "$($this.Name).Render" -ScriptBlock {
@@ -1310,7 +1307,6 @@ $component | Add-Member -MemberType ScriptMethod -Name "Render" -Value {
     } -Context @{ Component = $this.Name }
 }
 
-# Add HandleInput method
 $component | Add-Member -MemberType ScriptMethod -Name "HandleInput" -Value {
     param($Key)
     Invoke-WithErrorHandling -Component "$($this.Name).HandleInput" -ScriptBlock {

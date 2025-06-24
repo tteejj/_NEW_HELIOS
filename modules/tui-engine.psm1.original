@@ -281,8 +281,6 @@ function Process-SingleKeyInput {
     param($keyInfo)
 
     Invoke-WithErrorHandling -Component "TuiEngine.ProcessSingleKey" -Context @{ Key = $keyInfo.Key; Operation = "ProcessSingleKeyInput" } -ScriptBlock {
-        Write-Log -Level Debug -Message "Processing key input: Key=$($keyInfo.Key), Char=$($keyInfo.KeyChar), Modifiers=$($keyInfo.Modifiers)"
-        
         # Handle Tab navigation
         if ($keyInfo.Key -eq [ConsoleKey]::Tab) {
             if (Get-Command Move-Focus -ErrorAction SilentlyContinue) {
@@ -304,18 +302,14 @@ function Process-SingleKeyInput {
         # Focused component gets next chance
         $focusedComponent = if (Get-Command Get-FocusedComponent -ErrorAction SilentlyContinue) { Get-FocusedComponent } else { $null }
         if ($focusedComponent -and ($focusedComponent.PSObject.ScriptMethods.Name -contains 'HandleInput')) {
-            Write-Log -Level Debug -Message "Passing input to focused component: $($focusedComponent.Name)"
             if ($focusedComponent.HandleInput($keyInfo)) {
-                Write-Log -Level Debug -Message "Input handled by focused component"
                 return
             }
         }
 
         # Finally, the screen handles input
         if ($global:TuiState.CurrentScreen -and ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'HandleInput')) {
-            Write-Log -Level Debug -Message "Passing input to current screen: $($global:TuiState.CurrentScreen.Name)"
             $result = $global:TuiState.CurrentScreen.HandleInput($keyInfo)
-            Write-Log -Level Debug -Message "Screen input result: $result"
             switch ($result) {
                 "Back" { if(Get-Command Pop-Screen -ErrorAction SilentlyContinue) { Pop-Screen } }
                 "Quit" { 
@@ -331,7 +325,7 @@ function Process-SingleKeyInput {
 
 #endregion
 
-#region Frame Rendering - FIXED RECURSIVE IMPLEMENTATION
+#region Frame Rendering - CRITICAL RECURSIVE IMPLEMENTATION
 
 function Render-Frame {
     Invoke-WithErrorHandling -Component "TuiEngine.RenderFrame" -Context @{ Operation = "RenderFrame" } -ScriptBlock {
@@ -345,111 +339,53 @@ function Render-Frame {
 
         Clear-BackBuffer -BackgroundColor $bgColor
 
-        # FIX: Use a simple array instead of generic list to avoid type issues
-        $renderQueue = @()
+        $renderQueue = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-        # FIX: Define the recursive function with proper scoping
-        function CollectComponentsRecursive {
-            param($component, [ref]$queue)
+        $collectComponents = {
+            param($component)
             
-            if (-not $component) { 
-                Write-Log -Level Debug -Message "CollectComponentsRecursive: null component"
-                return 
-            }
-            
-            # Check visibility
-            $isVisible = $true
-            if ($component.PSObject.Properties['Visible']) {
-                $isVisible = $component.Visible
-            }
-            
-            if (-not $isVisible) { 
-                Write-Log -Level Debug -Message "Component $($component.Name ?? $component.Type) is not visible, skipping"
-                return 
-            }
-            
-            Write-Log -Level Debug -Message "Collecting component: $($component.Name ?? $component.Type) at X=$($component.X), Y=$($component.Y)"
-            
-            # Add to render queue
-            $queue.Value += $component
+            if (-not $component -or -not $component.Visible) { return }
+            $renderQueue.Add($component)
 
-            # Call CalculateLayout if available
             if (($component.PSObject.ScriptMethods.Name -contains 'CalculateLayout')) {
                 try {
-                    Write-Log -Level Debug -Message "Calculating layout for: $($component.Name ?? $component.Type)"
                     $component.CalculateLayout()
                 } catch {
                     Write-Log -Level Error -Message "Layout calculation failed for '$($component.Name)'" -Data $_
                 }
             }
 
-            # Process children
             if (($component.PSObject.Properties.Name -contains 'Children') -and $component.Children) {
-                Write-Log -Level Debug -Message "Processing $($component.Children.Count) children of $($component.Name ?? $component.Type)"
                 foreach ($child in $component.Children) {
-                    CollectComponentsRecursive -component $child -queue $queue
+                    & $collectComponents $child
                 }
             }
         }
 
-        # Collect components from current screen
         if ($global:TuiState.CurrentScreen) {
-            Write-Log -Level Debug -Message "Current screen: $($global:TuiState.CurrentScreen.Name)"
-            
-            # Check if screen has RootPanel
-            if ($global:TuiState.CurrentScreen.PSObject.Properties['RootPanel'] -and $global:TuiState.CurrentScreen.RootPanel) {
-                Write-Log -Level Debug -Message "Found RootPanel on current screen"
-                $queueRef = [ref]$renderQueue
-                CollectComponentsRecursive -component $global:TuiState.CurrentScreen.RootPanel -queue $queueRef
-                $renderQueue = $queueRef.Value
-            } else {
-                Write-Log -Level Warning -Message "Current screen has no RootPanel property!"
-                # Try to render the screen itself if it has a Render method
-                if ($global:TuiState.CurrentScreen.PSObject.ScriptMethods.Name -contains 'Render') {
-                    $renderQueue += $global:TuiState.CurrentScreen
-                }
-            }
-        } else {
-            Write-Log -Level Warning -Message "No current screen set!"
+            & $collectComponents $global:TuiState.CurrentScreen.RootPanel
         }
 
-        # Collect dialogs
         if (Get-Command -Name "Get-ActiveDialog" -ErrorAction SilentlyContinue) {
             $currentDialog = Get-ActiveDialog
             if ($currentDialog) {
-                Write-Log -Level Debug -Message "Found active dialog"
-                $queueRef = [ref]$renderQueue
-                CollectComponentsRecursive -component $currentDialog -queue $queueRef
-                $renderQueue = $queueRef.Value
+                & $collectComponents $currentDialog
             }
         }
 
-        Write-Log -Level Debug -Message "Collected $($renderQueue.Count) components for rendering"
-
-        # Sort by ZIndex and render
         $sortedComponents = $renderQueue | Sort-Object -Property @{
             Expression = { if ($null -ne $_.ZIndex) { $_.ZIndex } else { 0 } }
         }
 
         foreach ($component in $sortedComponents) {
             if (($component.PSObject.ScriptMethods.Name -contains 'Render')) {
-                Write-Log -Level Debug -Message "Rendering component: $($component.Name ?? $component.Type)"
                 Invoke-WithErrorHandling -Component "$($component.Name ?? $component.Type).Render" -Context @{ 
                     ComponentType = $component.Type;
                     ComponentName = $component.Name
                 } -ScriptBlock {
                     $component.Render()
                 }
-            } else {
-                Write-Log -Level Debug -Message "Component has no Render method: $($component.Name ?? $component.Type)"
             }
-        }
-
-        # FIX: Force at least one render for debugging
-        if ($renderQueue.Count -eq 0) {
-            Write-Log -Level Warning -Message "No components were collected for rendering!"
-            # Draw a test pattern to verify rendering works
-            Write-BufferString -X 5 -Y 5 -Text "NO COMPONENTS FOUND - CHECK SCREEN SETUP" -ForegroundColor ([ConsoleColor]::Red)
         }
 
         Render-BufferOptimized
@@ -466,8 +402,6 @@ function Render-BufferOptimized {
     $forceFullRender = $global:TuiState.RenderStats.FrameCount -eq 0
     
     Invoke-WithErrorHandling -Component "TuiEngine.RenderBuffer" -Context @{ Operation = "RenderBufferOptimized" } -ScriptBlock {
-        Write-Log -Level Debug -Message "Starting buffer render (Frame: $($global:TuiState.RenderStats.FrameCount))"
-        
         for ($y = 0; $y -lt $global:TuiState.BufferHeight; $y++) {
             $lineChanged = $false
             $lineBuilder = New-Object System.Text.StringBuilder
@@ -515,10 +449,7 @@ function Render-BufferOptimized {
         $outputBuilder.Append("$([char]27)[0m") | Out-Null
         
         if ($outputBuilder.Length -gt 4) { # more than just reset code
-            Write-Log -Level Debug -Message "Writing $($outputBuilder.Length) characters to console"
             [Console]::Write($outputBuilder.ToString())
-        } else {
-            Write-Log -Level Debug -Message "No changes to render"
         }
     }
     
@@ -702,7 +633,6 @@ function Write-BufferBox {
     $endX = $X + $Width - 1
     $endY = $Y + $Height - 1
 
-    # Fill background
     for ($row = $Y; $row -le $endY; $row++) {
         for ($col = $X; $col -le $endX; $col++) {
             if ($row -ge 0 -and $row -lt $global:TuiState.BufferHeight -and $col -ge 0 -and $col -lt $global:TuiState.BufferWidth) {
@@ -715,7 +645,6 @@ function Write-BufferBox {
         }
     }
 
-    # Draw borders
     Write-BufferString -X $X -Y $Y -Text ($borders.TopLeft + ($borders.Horizontal * ($Width - 2)) + $borders.TopRight) -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
     for ($i = 1; $i -lt ($Height - 1); $i++) {
         Write-BufferString -X $X -Y ($Y + $i) -Text $borders.Vertical -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
@@ -723,7 +652,6 @@ function Write-BufferBox {
     }
     Write-BufferString -X $X -Y $endY -Text ($borders.BottomLeft + ($borders.Horizontal * ($Width - 2)) + $borders.BottomRight) -ForegroundColor $BorderColor -BackgroundColor $BackgroundColor
     
-    # Draw title
     if ($Title) {
         $titleText = " $Title "
         $titleX = $X + [Math]::Floor(($Width - $titleText.Length) / 2)
